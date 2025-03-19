@@ -63,8 +63,8 @@ export default function RootLayout({
 
         <meta name="twitter:card" content="summary" />
         <meta name="twitter:url" content="https://yourdomain.com" />
-        <meta name="twitter:title" content="PWA App" />
-        <meta name="twitter:description" content="Best PWA App in the world" />
+        <meta name="twitter:title" content="Comic Reader" />
+        <meta name="twitter:description" content="Comic Reader" />
         <meta name="twitter:image" content="https://yourdomain.com/icons/android-chrome-192x192.png" />
         <meta name="twitter:creator" content="@DavidWShadow" />
         <meta property="og:type" content="website" />

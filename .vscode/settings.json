@@ -1,9 +1,9 @@
 {
     "files.exclude": {
-        "node_modules": true,
-        ".gitignore": true,
-        "README.md": true,
-        ".next": true,
-        ".vscode": true
+        "node_modules": false,
+        ".gitignore": false,
+        "README.md": false,
+        ".next": false,
+        ".vscode": false
     }
 }
