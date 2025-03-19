@@ -6,10 +6,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ChevronRight, File, FileText, Folder, FolderPlus, Home, Trash2, Upload } from "lucide-react"
+import { ChevronRight, File, FileText, Folder, FolderPlus, Home, Trash2, Upload, Archive } from "lucide-react"
 import { cn } from "@/lib/utils"
-import FileStorage, { FileType, FolderType } from "@/lib/indexdb"
+import FileStorage, { FileType, FolderType, ZipExtractionResult } from "@/lib/indexdb"
 import { useRouter } from "next/navigation"
+import { toast } from "sonner"
 
 // Helper functions
 const formatFileSize = (bytes: number): string => {
@@ -33,6 +34,7 @@ export default function FileManager() {
   const [isLoading, setIsLoading] = useState<boolean>(true)
   const [sortField, setSortField] = useState<'name' | 'size' | 'createdAt'>('name')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
+  const [isExtracting, setIsExtracting] = useState<boolean>(false)
 
   // Initialize the database and load data
   useEffect(() => {
@@ -213,6 +215,38 @@ export default function FileManager() {
     }
   }
 
+  // Extract zip file
+  const extractZipFile = async (fileId: string) => {
+    try {
+      setIsExtracting(true)
+      const result: ZipExtractionResult = await FileStorage.extractZipFile(fileId)
+      
+      if (result.success) {
+        // Update the files state with the newly extracted files
+        setFiles(prevFiles => [...prevFiles, ...result.extractedFiles])
+        toast.success("Extraction Successful", {
+          description: `Extracted ${result.totalFiles} files from the zip archive.`,
+        })
+      } else {
+        toast.error("Extraction Failed", {
+          description: "Failed to extract files from the zip archive.",
+        })
+      }
+    } catch (error) {
+      console.error('Error extracting zip file:', error)
+      toast.error("Extraction Failed", {
+        description: error instanceof Error ? error.message : "An unknown error occurred",
+      })
+    } finally {
+      setIsExtracting(false)
+    }
+  }
+
+  // Check if a file is a zip file
+  const isZipFile = (file: FileType): boolean => {
+    return FileStorage.isZipFile(file)
+  }
+
   return (
     <div className="border rounded-lg shadow-sm">
       {/* Breadcrumb navigation */}
@@ -366,7 +400,10 @@ export default function FileManager() {
                   className="flex items-center justify-between p-3 border-b last:border-b-0 hover:bg-muted/50"
                 >
                   <div className="flex items-center gap-3">
-                    <FileText className="h-5 w-5 text-muted-foreground" />
+                    {isZipFile(file) ? 
+                      <Archive className="h-5 w-5 text-muted-foreground" /> : 
+                      <FileText className="h-5 w-5 text-muted-foreground" />
+                    }
                     <div>
                       <p className="text-sm font-medium">{file.name}</p>
                       <p className="text-xs text-muted-foreground">
@@ -412,6 +449,16 @@ export default function FileManager() {
                         </div>
                       </DialogContent>
                     </Dialog>
+                    {isZipFile(file) && (
+                      <Button 
+                        size="sm" 
+                        variant="ghost" 
+                        onClick={() => extractZipFile(file.id)}
+                        disabled={isExtracting}
+                      >
+                        {isExtracting ? "Extracting..." : "Extract"}
+                      </Button>
+                    )}
                     <Button size="sm" variant="ghost" onClick={() => readFile(file.id)}>
                       Read
                     </Button>

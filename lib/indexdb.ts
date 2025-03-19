@@ -1,5 +1,6 @@
 // IndexedDB wrapper for file and folder storage
 // import { type } from "os"
+import JSZip from 'jszip'
 
 // TypeScript interfaces
 export type FileType = {
@@ -17,6 +18,13 @@ export type FolderType = {
   id: string
   name: string
   parentId: string | null
+}
+
+// Result type for zip extraction
+export type ZipExtractionResult = {
+  extractedFiles: FileType[]
+  totalFiles: number
+  success: boolean
 }
 
 const FileStorage = (() => {
@@ -504,6 +512,120 @@ const FileStorage = (() => {
     })
   }
 
+  // Check if a file is a ZIP file based on MIME type or extension
+  const isZipFile = (file: FileType): boolean => {
+    // Check by MIME type
+    if (file.type === 'application/zip' || file.type === 'application/x-zip-compressed') {
+      return true
+    }
+    
+    // Check by file extension
+    const fileName = file.name.toLowerCase()
+    return fileName.endsWith('.zip') || fileName.endsWith('.cbz')
+  }
+
+  // Extract a ZIP file and store its contents in the database
+  const extractZipFile = async (fileId: string): Promise<ZipExtractionResult> => {
+    if (!db) {
+      throw new Error('Database not initialized')
+    }
+    
+    try {
+      // Get the zip file from the database
+      const zipFile = await getFile(fileId)
+      
+      if (!zipFile || !zipFile.content) {
+        throw new Error('Zip file not found or has no content')
+      }
+      
+      if (!isZipFile(zipFile)) {
+        throw new Error('File is not a zip file')
+      }
+      
+      // Use JSZip to extract the contents
+      const zip = new JSZip()
+      const loadedZip = await zip.loadAsync(zipFile.content)
+      
+      const extractedFiles: FileType[] = []
+      const extractionPromises: Promise<FileType>[] = []
+      
+      // Process each file in the zip
+      for (const [relativePath, zipEntry] of Object.entries(loadedZip.files)) {
+        // Skip directories
+        if (zipEntry.dir) {
+          continue
+        }
+        
+        // Get the file data as ArrayBuffer
+        const fileData = await zipEntry.async('arraybuffer')
+        
+        // Extract the filename from the path
+        const pathParts = relativePath.split('/')
+        const fileName = pathParts[pathParts.length - 1]
+        
+        // Create a file object
+        const fileObject = new File([fileData], fileName, {
+          type: getMimeType(fileName),
+          lastModified: zipEntry.date.getTime()
+        })
+        
+        // Store the file in the same folder as the zip file
+        const promise = storeFile(fileObject, zipFile.folderId)
+          .then(storedFile => {
+            extractedFiles.push(storedFile)
+            return storedFile
+          })
+        
+        extractionPromises.push(promise)
+      }
+      
+      // Wait for all files to be stored
+      await Promise.all(extractionPromises)
+      
+      return {
+        extractedFiles,
+        totalFiles: extractedFiles.length,
+        success: true
+      }
+    } catch (error) {
+      console.error('Error extracting zip file:', error)
+      return {
+        extractedFiles: [],
+        totalFiles: 0,
+        success: false
+      }
+    }
+  }
+  
+  // Helper function to determine MIME type from filename
+  const getMimeType = (fileName: string): string => {
+    const extension = fileName.split('.').pop()?.toLowerCase() || ''
+    
+    const mimeTypes: Record<string, string> = {
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'gif': 'image/gif',
+      'webp': 'image/webp',
+      'bmp': 'image/bmp',
+      'pdf': 'application/pdf',
+      'txt': 'text/plain',
+      'html': 'text/html',
+      'htm': 'text/html',
+      'xml': 'application/xml',
+      'json': 'application/json',
+      'js': 'application/javascript',
+      'css': 'text/css',
+      'svg': 'image/svg+xml',
+      'mp3': 'audio/mpeg',
+      'mp4': 'video/mp4',
+      'zip': 'application/zip'
+      // Add more as needed
+    }
+    
+    return mimeTypes[extension] || 'application/octet-stream'
+  }
+
   // Return public methods
   return {
     init,
@@ -520,7 +642,10 @@ const FileStorage = (() => {
     getSubFolders,
     getFolder,
     deleteFolder,
-    moveFolder
+    moveFolder,
+    // Zip operations
+    isZipFile,
+    extractZipFile
   }
 })()
 
