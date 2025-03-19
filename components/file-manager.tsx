@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ChevronRight, File, FileText, Folder, FolderPlus, Home, Trash2, Upload, Archive, Download, CheckSquare, Square } from "lucide-react"
+import { ChevronRight, File, FileText, Folder, FolderPlus, Home, Trash2, Upload, Archive, Download, CheckSquare, Square, CheckCircle2, BookOpen } from "lucide-react"
 import { cn } from "@/lib/utils"
 import FileStorage, { FileType, FolderType, ZipExtractionResult, FileDownloadResult } from "@/lib/indexdb"
 import { useRouter } from "next/navigation"
@@ -41,6 +41,9 @@ export default function FileManager() {
   const [isDownloading, setIsDownloading] = useState<boolean>(false)
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([])
   const [isBulkMoveDialogOpen, setIsBulkMoveDialogOpen] = useState<boolean>(false)
+  const [hideReadFiles, setHideReadFiles] = useState<boolean>(false)
+  const [isClearDataDialogOpen, setIsClearDataDialogOpen] = useState<boolean>(false)
+  const [isClearing, setIsClearing] = useState<boolean>(false)
 
   // Initialize the database and load data
   useEffect(() => {
@@ -79,7 +82,17 @@ export default function FileManager() {
   const subFolders = folders.filter((folder) => folder.parentId === currentFolderId)
 
   // Get files in current folder
-  const folderFiles = files.filter((file) => file.folderId === currentFolderId)
+  const folderFiles = files.filter((file) => {
+    // First filter by folder
+    const inCurrentFolder = file.folderId === currentFolderId
+    
+    // Then apply the read files filter if enabled
+    if (hideReadFiles && file.read) {
+      return false
+    }
+    
+    return inCurrentFolder
+  })
 
   // Check if all files in the current folder are selected
   const allFilesSelected = folderFiles.length > 0 && selectedFileIds.length === folderFiles.length &&
@@ -268,10 +281,26 @@ export default function FileManager() {
     }
   }
 
-  // Read file
+  // Read file and mark it as read
   const readFile = async (fileId: string) => {
-    // Navigate to the read page with the file ID
-    router.push(`/read/${fileId}`)
+    try {
+      // Mark file as read
+      await FileStorage.markFileAsRead(fileId, true)
+      
+      // Update the file in state
+      setFiles(prevFiles => 
+        prevFiles.map(file => 
+          file.id === fileId ? { ...file, read: true } : file
+        )
+      )
+      
+      // Navigate to the read page with the file ID
+      router.push(`/read/${fileId}`)
+    } catch (error) {
+      console.error('Error updating read status:', error)
+      // Still navigate even if marking as read fails
+      router.push(`/read/${fileId}`)
+    }
   }
 
   // Delete folder
@@ -373,8 +402,102 @@ export default function FileManager() {
     }
   }
 
+  // Function to mark a file as read/unread
+  const toggleReadStatus = async (fileId: string, event?: React.MouseEvent) => {
+    if (event) {
+      event.stopPropagation()
+    }
+    
+    try {
+      const updatedFile = await FileStorage.toggleFileReadStatus(fileId)
+      setFiles(prevFiles => 
+        prevFiles.map(file => 
+          file.id === fileId ? { ...file, read: updatedFile.read } : file
+        )
+      )
+    } catch (error) {
+      console.error('Error updating read status:', error)
+      toast.error("Failed to update read status")
+    }
+  }
+  
+  // Function to mark multiple files as read/unread
+  const markSelectedFilesAsRead = async (isRead: boolean = true) => {
+    if (selectedFileIds.length === 0) return
+    
+    try {
+      await FileStorage.markMultipleFilesAsRead(selectedFileIds, isRead)
+      
+      setFiles(prevFiles => 
+        prevFiles.map(file => 
+          selectedFileIds.includes(file.id) ? { ...file, read: isRead } : file
+        )
+      )
+      
+      toast.success(`${isRead ? 'Marked' : 'Unmarked'} ${selectedFileIds.length} files as ${isRead ? 'read' : 'unread'}`)
+    } catch (error) {
+      console.error('Error updating read status for multiple files:', error)
+      toast.error("Failed to update read status")
+    }
+  }
+
+  // Clear all data from IndexedDB
+  const clearAllData = async () => {
+    try {
+      setIsClearing(true)
+      
+      // Clear all IndexedDB databases
+      const databases = await window.indexedDB.databases()
+      for (const db of databases) {
+        if (db.name) {
+          window.indexedDB.deleteDatabase(db.name)
+        }
+      }
+      
+      // Clear localStorage
+      window.localStorage.clear()
+      
+      // Clear sessionStorage
+      window.sessionStorage.clear()
+      
+      // Reset all state
+      setFiles([])
+      setFolders([])
+      setCurrentFolderId("root")
+      setSelectedFileIds([])
+      
+      // Create a new root folder
+      const rootFolder = {
+        id: "root",
+        name: "Root",
+        parentId: null,
+        createdAt: new Date()
+      }
+      
+      setFolders([rootFolder])
+      setBreadcrumbs([rootFolder])
+      
+      toast.success("Storage Cleared", {
+        description: "All files and folders have been removed from browser storage.",
+      })
+      
+      setIsClearDataDialogOpen(false)
+      
+      // Refresh the page immediately to ensure clean state
+      window.location.reload()
+      
+    } catch (error) {
+      console.error('Error clearing storage:', error)
+      toast.error("Clear Failed", {
+        description: error instanceof Error ? error.message : "An unknown error occurred",
+      })
+    } finally {
+      setIsClearing(false)
+    }
+  }
+
   return (
-    <div className="border rounded-lg shadow-sm">
+    <div className="border rounded-lg shadow-sm ">
       {/* Breadcrumb navigation */}
       <div className="flex items-center p-4 border-b bg-muted/20">
         <Button variant="ghost" size="sm" onClick={() => navigateToFolder("root")} className="h-8 gap-1">
@@ -390,6 +513,37 @@ export default function FileManager() {
             </Button>
           </div>
         ))}
+        
+        {/* Add Clear All Data button */}
+        <div className="ml-auto">
+          <Dialog open={isClearDataDialogOpen} onOpenChange={setIsClearDataDialogOpen}>
+            <DialogTrigger asChild>
+              <Button size="sm" variant="outline" className="gap-1 text-destructive">
+                <Trash2 className="h-4 w-4" />
+                Clear All Data
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Clear All Data</DialogTitle>
+              </DialogHeader>
+              <div className="py-4">
+                <p className="text-sm mb-4">
+                  This will permanently delete <strong>all files and folders</strong> from the database. 
+                  This action cannot be undone.
+                </p>
+                <Button 
+                  onClick={clearAllData} 
+                  disabled={isClearing}
+                  variant="destructive"
+                  className="w-full"
+                >
+                  {isClearing ? "Clearing data..." : "Yes, delete everything"}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
       {/* Dropzone */}
@@ -512,54 +666,70 @@ export default function FileManager() {
                 />
               )}
             </div>
-            <div className="flex gap-2">
-              <Button 
-                size="sm" 
-                variant={sortField === 'name' ? 'secondary' : 'outline'} 
-                onClick={() => toggleSort('name')}
-                className="text-xs gap-1"
-              >
-                Name
-                {sortField === 'name' && (
-                  sortDirection === 'asc' ? 
-                    <ChevronRight className="h-3 w-3 rotate-90" /> : 
-                    <ChevronRight className="h-3 w-3 -rotate-90" />
-                )}
-              </Button>
-              <Button 
-                size="sm" 
-                variant={sortField === 'size' ? 'secondary' : 'outline'} 
-                onClick={() => toggleSort('size')}
-                className="text-xs gap-1"
-              >
-                Size
-                {sortField === 'size' && (
-                  sortDirection === 'asc' ? 
-                    <ChevronRight className="h-3 w-3 rotate-90" /> : 
-                    <ChevronRight className="h-3 w-3 -rotate-90" />
-                )}
-              </Button>
-              <Button 
-                size="sm" 
-                variant={sortField === 'createdAt' ? 'secondary' : 'outline'} 
-                onClick={() => toggleSort('createdAt')}
-                className="text-xs gap-1"
-              >
-                Date
-                {sortField === 'createdAt' && (
-                  sortDirection === 'asc' ? 
-                    <ChevronRight className="h-3 w-3 rotate-90" /> : 
-                    <ChevronRight className="h-3 w-3 -rotate-90" />
-                )}
-              </Button>
+
+            <div className="flex items-center gap-4">
+              {/* Hide read files toggle */}
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="hide-read"
+                  checked={hideReadFiles}
+                  onCheckedChange={(checked) => setHideReadFiles(!!checked)}
+                  aria-label="Hide read files"
+                />
+                <label htmlFor="hide-read" className="text-xs cursor-pointer">
+                  Hide read
+                </label>
+              </div>
+
+              <div className="flex gap-2">
+                <Button 
+                  size="sm" 
+                  variant={sortField === 'name' ? 'secondary' : 'outline'} 
+                  onClick={() => toggleSort('name')}
+                  className="text-xs gap-1"
+                >
+                  Name
+                  {sortField === 'name' && (
+                    sortDirection === 'asc' ? 
+                      <ChevronRight className="h-3 w-3 rotate-90" /> : 
+                      <ChevronRight className="h-3 w-3 -rotate-90" />
+                  )}
+                </Button>
+                <Button 
+                  size="sm" 
+                  variant={sortField === 'size' ? 'secondary' : 'outline'} 
+                  onClick={() => toggleSort('size')}
+                  className="text-xs gap-1"
+                >
+                  Size
+                  {sortField === 'size' && (
+                    sortDirection === 'asc' ? 
+                      <ChevronRight className="h-3 w-3 rotate-90" /> : 
+                      <ChevronRight className="h-3 w-3 -rotate-90" />
+                  )}
+                </Button>
+                <Button 
+                  size="sm" 
+                  variant={sortField === 'createdAt' ? 'secondary' : 'outline'} 
+                  onClick={() => toggleSort('createdAt')}
+                  className="text-xs gap-1"
+                >
+                  Date
+                  {sortField === 'createdAt' && (
+                    sortDirection === 'asc' ? 
+                      <ChevronRight className="h-3 w-3 rotate-90" /> : 
+                      <ChevronRight className="h-3 w-3 -rotate-90" />
+                  )}
+                </Button>
+              </div>
             </div>
           </div>
           
           {/* Bulk actions bar - show when files are selected */}
           {selectedFileIds.length > 0 && (
-            <div className="mb-2 p-2 bg-muted/20 border rounded-md flex items-center justify-between">
+            <div className="mb-2 p-2 bg-muted/20 border rounded-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
               <span className="text-sm font-medium">{selectedFileIds.length} files selected</span>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2 w-full sm:w-auto">
                 <Dialog open={isBulkMoveDialogOpen} onOpenChange={setIsBulkMoveDialogOpen}>
                   <DialogTrigger asChild>
                     <Button size="sm" variant="outline">
@@ -593,6 +763,24 @@ export default function FileManager() {
                 <Button 
                   size="sm" 
                   variant="outline" 
+                  className="gap-1"
+                  onClick={() => markSelectedFilesAsRead(true)}
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  Mark as Read
+                </Button>
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  className="gap-1"
+                  onClick={() => markSelectedFilesAsRead(false)}
+                >
+                  <BookOpen className="h-4 w-4" />
+                  Mark as Unread
+                </Button>
+                <Button 
+                  size="sm" 
+                  variant="outline" 
                   className="text-destructive"
                   onClick={bulkDeleteFiles}
                 >
@@ -623,10 +811,15 @@ export default function FileManager() {
                       onClick={(e) => e.stopPropagation()}
                       aria-label={`Select ${file.name}`}
                     />
-                    {isZipFile(file) ? 
-                      <Archive className="h-5 w-5 text-muted-foreground" /> : 
-                      <FileText className="h-5 w-5 text-muted-foreground" />
-                    }
+                    <div className="relative">
+                      {isZipFile(file) ? 
+                        <Archive className="h-5 w-5 text-muted-foreground" /> : 
+                        <FileText className="h-5 w-5 text-muted-foreground" />
+                      }
+                      {file.read && (
+                        <CheckCircle2 className="h-3.5 w-3.5 text-green-500 absolute -bottom-1 -right-1 bg-background rounded-full" />
+                      )}
+                    </div>
                     <div>
                       <p className="text-sm font-medium">{file.name}</p>
                       <p className="text-xs text-muted-foreground">

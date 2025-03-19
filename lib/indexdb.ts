@@ -12,6 +12,7 @@ export type FileType = {
   content?: ArrayBuffer  // The actual file content
   type?: string          // MIME type
   lastModified?: number  // Last modified timestamp
+  read?: boolean         // Whether the file has been read
 }
 
 export type FolderType = {
@@ -715,6 +716,123 @@ const FileStorage = (() => {
     return mimeTypes[extension] || 'application/octet-stream'
   }
 
+  // Mark a file as read or unread
+  const markFileAsRead = (fileId: string, isRead: boolean = true): Promise<FileType> => {
+    return new Promise((resolve, reject) => {
+      if (!db) {
+        reject(new Error('Database not initialized'))
+        return
+      }
+      
+      const transaction = db.transaction([FILE_STORE], 'readwrite')
+      const store = transaction.objectStore(FILE_STORE)
+      const request = store.get(fileId)
+      
+      request.onsuccess = (event) => {
+        const fileData = (event.target as IDBRequest).result
+        if (fileData) {
+          fileData.read = isRead
+          const updateRequest = store.put(fileData)
+          
+          updateRequest.onsuccess = () => {
+            resolve(fileData)
+          }
+          
+          updateRequest.onerror = (event) => {
+            console.error('Error updating file read status:', (event.target as IDBRequest).error)
+            reject((event.target as IDBRequest).error)
+          }
+        } else {
+          reject(new Error('File not found'))
+        }
+      }
+      
+      request.onerror = (event) => {
+        console.error('Error getting file:', (event.target as IDBRequest).error)
+        reject((event.target as IDBRequest).error)
+      }
+    })
+  }
+
+  // Toggle read status of a file
+  const toggleFileReadStatus = (fileId: string): Promise<FileType> => {
+    return new Promise((resolve, reject) => {
+      if (!db) {
+        reject(new Error('Database not initialized'))
+        return
+      }
+      
+      const transaction = db.transaction([FILE_STORE], 'readwrite')
+      const store = transaction.objectStore(FILE_STORE)
+      const request = store.get(fileId)
+      
+      request.onsuccess = (event) => {
+        const fileData = (event.target as IDBRequest).result
+        if (fileData) {
+          fileData.read = !fileData.read
+          const updateRequest = store.put(fileData)
+          
+          updateRequest.onsuccess = () => {
+            resolve(fileData)
+          }
+          
+          updateRequest.onerror = (event) => {
+            console.error('Error toggling file read status:', (event.target as IDBRequest).error)
+            reject((event.target as IDBRequest).error)
+          }
+        } else {
+          reject(new Error('File not found'))
+        }
+      }
+      
+      request.onerror = (event) => {
+        console.error('Error getting file:', (event.target as IDBRequest).error)
+        reject((event.target as IDBRequest).error)
+      }
+    })
+  }
+
+  // Mark multiple files as read or unread
+  const markMultipleFilesAsRead = (fileIds: string[], isRead: boolean = true): Promise<boolean> => {
+    return new Promise(async (resolve, reject) => {
+      if (!db) {
+        reject(new Error('Database not initialized'))
+        return
+      }
+      
+      try {
+        const transaction = db.transaction([FILE_STORE], 'readwrite')
+        const store = transaction.objectStore(FILE_STORE)
+        
+        for (const fileId of fileIds) {
+          const request = store.get(fileId)
+          await new Promise<void>((resolve, reject) => {
+            request.onsuccess = (event) => {
+              const fileData = (event.target as IDBRequest).result
+              if (fileData) {
+                fileData.read = isRead
+                store.put(fileData)
+                resolve()
+              } else {
+                resolve() // Skip if file not found
+              }
+            }
+            
+            request.onerror = () => {
+              console.error('Error getting file:', request.error)
+              resolve() // Continue with other files
+            }
+          })
+        }
+        
+        resolve(true)
+      } catch (error) {
+        console.error('Error marking files as read:', error)
+        reject(error)
+      }
+    })
+  }
+
   // Return public methods
   return {
     init,
@@ -725,6 +843,10 @@ const FileStorage = (() => {
     getFile,
     moveFile,
     deleteFile,
+    // Read status operations
+    markFileAsRead,
+    toggleFileReadStatus,
+    markMultipleFilesAsRead,
     // Folder operations
     createFolder,
     getAllFolders,
