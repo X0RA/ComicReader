@@ -37,9 +37,9 @@ export default function ReadFilePage({ params }: { params: { id: string } }) {
         
         // Handle file content based on type
         if (fileData.content) {
-          if (fileData.type.startsWith('text/') || 
+          if (fileData.type && (fileData.type.startsWith('text/') || 
               fileData.type === 'application/json' ||
-              fileData.type === 'application/javascript') {
+              fileData.type === 'application/javascript')) {
             // For text files, convert ArrayBuffer to text
             const text = await new Response(fileData.content as ArrayBuffer).text()
             setFileContent(text)
@@ -138,7 +138,7 @@ export default function ReadFilePage({ params }: { params: { id: string } }) {
 
         <div className="p-4">
           {fileContent ? (
-            file.type.startsWith('image/') ? (
+            file.type && file.type.startsWith('image/') ? (
               <div className="flex justify-center">
                 <img 
                   src={URL.createObjectURL(new Blob([file.content as ArrayBuffer], { type: file.type }))} 
@@ -146,9 +146,9 @@ export default function ReadFilePage({ params }: { params: { id: string } }) {
                   className="max-w-full max-h-[70vh] object-contain"
                 />
               </div>
-            ) : file.type.startsWith('text/') || 
+            ) : file.type && (file.type.startsWith('text/') || 
                 file.type === 'application/json' || 
-                file.type === 'application/javascript' ? (
+                file.type === 'application/javascript') ? (
               <pre className="p-4 bg-muted/30 rounded-lg overflow-auto max-h-[60vh]">
                 <code>{fileContent}</code>
               </pre>
