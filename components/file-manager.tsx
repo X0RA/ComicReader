@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useDropzone } from "react-dropzone"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -8,75 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ChevronRight, File, FileText, Folder, FolderPlus, Home, Trash2, Upload } from "lucide-react"
 import { cn } from "@/lib/utils"
-
-// Types
-type FileType = {
-  id: string
-  name: string
-  size: number
-  folderId: string
-  createdAt: Date
-}
-
-type FolderType = {
-  id: string
-  name: string
-  parentId: string | null
-}
-
-// Dummy data
-const initialFolders: FolderType[] = [
-  { id: "root", name: "Root", parentId: null },
-  { id: "f1", name: "Documents", parentId: "root" },
-  { id: "f2", name: "Images", parentId: "root" },
-  { id: "f3", name: "Work", parentId: "f1" },
-  { id: "f4", name: "Personal", parentId: "f1" },
-]
-
-const initialFiles: FileType[] = [
-  {
-    id: "file1",
-    name: "report.pdf",
-    size: 2500000,
-    folderId: "f1",
-    createdAt: new Date("2023-01-15"),
-  },
-  {
-    id: "file2",
-    name: "presentation.pptx",
-    size: 5000000,
-    folderId: "f1",
-    createdAt: new Date("2023-02-20"),
-  },
-  {
-    id: "file3",
-    name: "vacation.jpg",
-    size: 3500000,
-    folderId: "f2",
-    createdAt: new Date("2023-03-10"),
-  },
-  {
-    id: "file4",
-    name: "profile.png",
-    size: 1200000,
-    folderId: "f2",
-    createdAt: new Date("2023-04-05"),
-  },
-  {
-    id: "file5",
-    name: "budget.xlsx",
-    size: 1800000,
-    folderId: "f3",
-    createdAt: new Date("2023-05-12"),
-  },
-  {
-    id: "file6",
-    name: "notes.txt",
-    size: 50000,
-    folderId: "f4",
-    createdAt: new Date("2023-06-18"),
-  },
-]
+import FileStorage, { FileType, FolderType } from "@/lib/indexdb"
 
 // Helper functions
 const formatFileSize = (bytes: number): string => {
@@ -87,18 +19,49 @@ const formatFileSize = (bytes: number): string => {
 }
 
 export default function FileManager() {
-  const [files, setFiles] = useState<FileType[]>(initialFiles)
-  const [folders, setFolders] = useState<FolderType[]>(initialFolders)
+  const [files, setFiles] = useState<FileType[]>([])
+  const [folders, setFolders] = useState<FolderType[]>([])
   const [currentFolderId, setCurrentFolderId] = useState<string>("root")
   const [newFolderName, setNewFolderName] = useState<string>("")
   const [isNewFolderDialogOpen, setIsNewFolderDialogOpen] = useState<boolean>(false)
   const [isMoveFileDialogOpen, setIsMoveFileDialogOpen] = useState<boolean>(false)
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null)
   const [targetFolderId, setTargetFolderId] = useState<string>("root")
-  const [breadcrumbs, setBreadcrumbs] = useState<FolderType[]>([initialFolders[0]])
+  const [breadcrumbs, setBreadcrumbs] = useState<FolderType[]>([])
+  const [isLoading, setIsLoading] = useState<boolean>(true)
+
+  // Initialize the database and load data
+  useEffect(() => {
+    const initializeDb = async () => {
+      try {
+        await FileStorage.init()
+        
+        // Load folders and files
+        const allFolders = await FileStorage.getAllFolders()
+        setFolders(allFolders)
+        
+        const allFiles = await FileStorage.getAllFiles()
+        setFiles(allFiles)
+        
+        // Set initial breadcrumbs
+        const rootFolder = allFolders.find(folder => folder.id === 'root')
+        if (rootFolder) {
+          setBreadcrumbs([rootFolder])
+        }
+        
+        setIsLoading(false)
+      } catch (error) {
+        console.error('Error initializing database:', error)
+        setIsLoading(false)
+      }
+    }
+    
+    initializeDb()
+  }, [])
 
   // Get current folder
-  const currentFolder = folders.find((folder) => folder.id === currentFolderId) || initialFolders[0]
+  const currentFolder = folders.find((folder) => folder.id === currentFolderId) || 
+    { id: 'root', name: 'Root', parentId: null }
 
   // Get subfolders of current folder
   const subFolders = folders.filter((folder) => folder.parentId === currentFolderId)
@@ -108,20 +71,20 @@ export default function FileManager() {
 
   // Dropzone setup
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop: (acceptedFiles) => {
-      const newFiles = acceptedFiles.map((file) => ({
-        id: `file${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-        name: file.name,
-        size: file.size,
-        folderId: currentFolderId,
-        createdAt: new Date(),
-      }))
-      setFiles([...files, ...newFiles])
+    onDrop: async (acceptedFiles) => {
+      try {
+        for (const file of acceptedFiles) {
+          const storedFile = await FileStorage.storeFile(file, currentFolderId)
+          setFiles(prevFiles => [...prevFiles, storedFile])
+        }
+      } catch (error) {
+        console.error('Error uploading files:', error)
+      }
     },
   })
 
   // Handle folder navigation
-  const navigateToFolder = (folderId: string) => {
+  const navigateToFolder = async (folderId: string) => {
     setCurrentFolderId(folderId)
 
     // Update breadcrumbs
@@ -142,48 +105,71 @@ export default function FileManager() {
   }
 
   // Create new folder
-  const createNewFolder = () => {
+  const createNewFolder = async () => {
     if (newFolderName.trim() === "") return
 
-    const newFolder: FolderType = {
-      id: `folder-${Date.now()}`,
-      name: newFolderName,
-      parentId: currentFolderId,
+    try {
+      const newFolder = await FileStorage.createFolder(newFolderName, currentFolderId)
+      setFolders([...folders, newFolder])
+      setNewFolderName("")
+      setIsNewFolderDialogOpen(false)
+    } catch (error) {
+      console.error('Error creating folder:', error)
     }
-
-    setFolders([...folders, newFolder])
-    setNewFolderName("")
-    setIsNewFolderDialogOpen(false)
   }
 
   // Delete file
-  const deleteFile = (fileId: string) => {
-    setFiles(files.filter((file) => file.id !== fileId))
+  const deleteFile = async (fileId: string) => {
+    try {
+      await FileStorage.deleteFile(fileId)
+      setFiles(files.filter((file) => file.id !== fileId))
+    } catch (error) {
+      console.error('Error deleting file:', error)
+    }
   }
 
   // Move file to another folder
-  const moveFile = () => {
+  const moveFile = async () => {
     if (!selectedFileId) return
 
-    setFiles(
-      files.map((file) => {
-        if (file.id === selectedFileId) {
-          return { ...file, folderId: targetFolderId }
-        }
-        return file
-      }),
-    )
+    try {
+      await FileStorage.moveFile(selectedFileId, targetFolderId)
+      
+      setFiles(
+        files.map((file) => {
+          if (file.id === selectedFileId) {
+            return { ...file, folderId: targetFolderId }
+          }
+          return file
+        }),
+      )
 
-    setIsMoveFileDialogOpen(false)
-    setSelectedFileId(null)
+      setIsMoveFileDialogOpen(false)
+      setSelectedFileId(null)
+    } catch (error) {
+      console.error('Error moving file:', error)
+    }
   }
 
-  // Read file (in a real app, this would open or download the file)
-  const readFile = (fileId: string) => {
-    const file = files.find((f) => f.id === fileId)
-    if (file) {
-      alert(`Reading file: ${file.name}`)
-      // In a real app, you would handle file reading/downloading here
+  // Read file
+  const readFile = async (fileId: string) => {
+    try {
+      const file = await FileStorage.getFile(fileId)
+      if (file) {
+        // Create a blob from the file content
+        const blob = new Blob([file.content as ArrayBuffer], { type: file.type })
+        
+        // Create a URL for the blob
+        const url = URL.createObjectURL(blob)
+        
+        // Open in a new tab or download
+        window.open(url, '_blank')
+        
+        // Clean up the URL
+        setTimeout(() => URL.revokeObjectURL(url), 1000)
+      }
+    } catch (error) {
+      console.error('Error reading file:', error)
     }
   }
 
