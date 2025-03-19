@@ -6,11 +6,12 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ChevronRight, File, FileText, Folder, FolderPlus, Home, Trash2, Upload, Archive, Download } from "lucide-react"
+import { ChevronRight, File, FileText, Folder, FolderPlus, Home, Trash2, Upload, Archive, Download, CheckSquare, Square } from "lucide-react"
 import { cn } from "@/lib/utils"
 import FileStorage, { FileType, FolderType, ZipExtractionResult, FileDownloadResult } from "@/lib/indexdb"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { Checkbox } from "@/components/ui/checkbox"
 
 // Helper functions
 const formatFileSize = (bytes: number): string => {
@@ -38,6 +39,8 @@ export default function FileManager() {
   const [isDownloadUrlDialogOpen, setIsDownloadUrlDialogOpen] = useState<boolean>(false)
   const [downloadUrl, setDownloadUrl] = useState<string>("")
   const [isDownloading, setIsDownloading] = useState<boolean>(false)
+  const [selectedFileIds, setSelectedFileIds] = useState<string[]>([])
+  const [isBulkMoveDialogOpen, setIsBulkMoveDialogOpen] = useState<boolean>(false)
 
   // Initialize the database and load data
   useEffect(() => {
@@ -78,6 +81,10 @@ export default function FileManager() {
   // Get files in current folder
   const folderFiles = files.filter((file) => file.folderId === currentFolderId)
 
+  // Check if all files in the current folder are selected
+  const allFilesSelected = folderFiles.length > 0 && selectedFileIds.length === folderFiles.length &&
+    folderFiles.every(file => selectedFileIds.includes(file.id))
+
   // Sort the files based on current sort settings
   const sortedFiles = [...folderFiles].sort((a, b) => {
     if (sortField === 'name') {
@@ -113,6 +120,8 @@ export default function FileManager() {
   // Handle folder navigation
   const navigateToFolder = async (folderId: string) => {
     setCurrentFolderId(folderId)
+    // Clear selected files when changing folders
+    setSelectedFileIds([])
 
     // Update breadcrumbs
     const newBreadcrumbs: FolderType[] = []
@@ -150,8 +159,33 @@ export default function FileManager() {
     try {
       await FileStorage.deleteFile(fileId)
       setFiles(files.filter((file) => file.id !== fileId))
+      // Remove from selected files if it was selected
+      setSelectedFileIds(prev => prev.filter(id => id !== fileId))
     } catch (error) {
       console.error('Error deleting file:', error)
+    }
+  }
+
+  // Bulk delete files
+  const bulkDeleteFiles = async () => {
+    if (selectedFileIds.length === 0) return
+    
+    try {
+      for (const fileId of selectedFileIds) {
+        await FileStorage.deleteFile(fileId)
+      }
+      
+      setFiles(files.filter((file) => !selectedFileIds.includes(file.id)))
+      setSelectedFileIds([])
+      
+      toast.success("Delete Successful", {
+        description: `Successfully deleted ${selectedFileIds.length} files`,
+      })
+    } catch (error) {
+      console.error('Error deleting files:', error)
+      toast.error("Delete Failed", {
+        description: error instanceof Error ? error.message : "An unknown error occurred",
+      })
     }
   }
 
@@ -175,6 +209,62 @@ export default function FileManager() {
       setSelectedFileId(null)
     } catch (error) {
       console.error('Error moving file:', error)
+    }
+  }
+
+  // Bulk move files to another folder
+  const bulkMoveFiles = async () => {
+    if (selectedFileIds.length === 0) return
+    
+    try {
+      for (const fileId of selectedFileIds) {
+        await FileStorage.moveFile(fileId, targetFolderId)
+      }
+      
+      setFiles(
+        files.map((file) => {
+          if (selectedFileIds.includes(file.id)) {
+            return { ...file, folderId: targetFolderId }
+          }
+          return file
+        }),
+      )
+      
+      setIsBulkMoveDialogOpen(false)
+      setSelectedFileIds([])
+      
+      toast.success("Move Successful", {
+        description: `Successfully moved ${selectedFileIds.length} files`,
+      })
+    } catch (error) {
+      console.error('Error moving files:', error)
+      toast.error("Move Failed", {
+        description: error instanceof Error ? error.message : "An unknown error occurred",
+      })
+    }
+  }
+
+  // Toggle file selection
+  const toggleFileSelection = (fileId: string, event?: React.MouseEvent<HTMLInputElement>) => {
+    if (event) {
+      event.stopPropagation()
+    }
+    
+    setSelectedFileIds(prev => {
+      if (prev.includes(fileId)) {
+        return prev.filter(id => id !== fileId)
+      } else {
+        return [...prev, fileId]
+      }
+    })
+  }
+
+  // Toggle select all files
+  const toggleSelectAllFiles = () => {
+    if (allFilesSelected) {
+      setSelectedFileIds([])
+    } else {
+      setSelectedFileIds(folderFiles.map(file => file.id))
     }
   }
 
@@ -411,7 +501,17 @@ export default function FileManager() {
         {/* Files */}
         <div>
           <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-medium text-muted-foreground">Files</h4>
+            <div className="flex items-center gap-2">
+              <h4 className="text-sm font-medium text-muted-foreground">Files</h4>
+              {folderFiles.length > 0 && (
+                <Checkbox 
+                  id="select-all"
+                  checked={allFilesSelected}
+                  onCheckedChange={toggleSelectAllFiles}
+                  aria-label="Select all files"
+                />
+              )}
+            </div>
             <div className="flex gap-2">
               <Button 
                 size="sm" 
@@ -455,6 +555,60 @@ export default function FileManager() {
             </div>
           </div>
           
+          {/* Bulk actions bar - show when files are selected */}
+          {selectedFileIds.length > 0 && (
+            <div className="mb-2 p-2 bg-muted/20 border rounded-md flex items-center justify-between">
+              <span className="text-sm font-medium">{selectedFileIds.length} files selected</span>
+              <div className="flex gap-2">
+                <Dialog open={isBulkMoveDialogOpen} onOpenChange={setIsBulkMoveDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button size="sm" variant="outline">
+                      Move Selected
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Move Files</DialogTitle>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                      <p className="text-sm">
+                        Select destination folder for {selectedFileIds.length} selected files
+                      </p>
+                      <Select value={targetFolderId} onValueChange={setTargetFolderId}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select folder" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {folders.map((folder) => (
+                            <SelectItem key={folder.id} value={folder.id}>
+                              {folder.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button onClick={bulkMoveFiles}>Move Files</Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  className="text-destructive"
+                  onClick={bulkDeleteFiles}
+                >
+                  Delete Selected
+                </Button>
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  onClick={() => setSelectedFileIds([])}
+                >
+                  Clear Selection
+                </Button>
+              </div>
+            </div>
+          )}
+          
           {folderFiles.length > 0 ? (
             <div className="border rounded-md overflow-hidden">
               {sortedFiles.map((file) => (
@@ -463,6 +617,12 @@ export default function FileManager() {
                   className="flex items-center justify-between p-3 border-b last:border-b-0 hover:bg-muted/50"
                 >
                   <div className="flex items-center gap-3">
+                    <Checkbox
+                      checked={selectedFileIds.includes(file.id)}
+                      onCheckedChange={() => toggleFileSelection(file.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={`Select ${file.name}`}
+                    />
                     {isZipFile(file) ? 
                       <Archive className="h-5 w-5 text-muted-foreground" /> : 
                       <FileText className="h-5 w-5 text-muted-foreground" />
