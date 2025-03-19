@@ -154,18 +154,12 @@ export default function ComicView({ file }: ComicViewProps) {
       onClick={toggleOverlay}
     >
       {showOverlay && (
-        <div className="fixed bottom-0 left-0 right-0 bg-black/70 backdrop-blur-sm z-50 p-4 rounded-t-xl shadow-lg transition-all duration-300 ease-in-out">
-          <div className="flex items-center justify-between gap-4 max-w-4xl mx-auto">
-            <div className="flex gap-2">
-              <Link href="/">
-                <Button variant="outline" className="bg-background/90 hover:bg-background">
-                  <Home className="mr-2 h-4 w-4" />
-                  Home
-                </Button>
-              </Link>
-              
+        <div className="fixed bottom-0 left-0 right-0 bg-black/70 backdrop-blur-sm z-50 p-2 md:p-4 rounded-t-xl shadow-lg transition-all duration-300 ease-in-out">
+          <div className="flex flex-col items-center justify-between gap-2 max-w-4xl mx-auto">
+            <div className="flex items-center justify-between w-full">
               <Button 
-                variant="outline" 
+                variant="outline"
+                size="sm"
                 className="bg-background/90 hover:bg-background"
                 disabled={!prevFileId}
                 onClick={(e) => {
@@ -173,12 +167,17 @@ export default function ComicView({ file }: ComicViewProps) {
                   if (prevFileId) navigateToFile(prevFileId);
                 }}
               >
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Previous
+                <ArrowLeft className="h-4 w-4" />
+                <span className="sr-only">Previous</span>
               </Button>
               
+              <div className="px-2 py-1 bg-background/90 rounded-md flex-grow text-center mx-2">
+                <p className="text-xs md:text-sm font-medium truncate">{file.name}</p>
+              </div>
+              
               <Button 
-                variant="outline" 
+                variant="outline"
+                size="sm"
                 className="bg-background/90 hover:bg-background"
                 disabled={!nextFileId}
                 onClick={(e) => {
@@ -186,49 +185,55 @@ export default function ComicView({ file }: ComicViewProps) {
                   if (nextFileId) navigateToFile(nextFileId);
                 }}
               >
-                <ArrowRight className="h-4 w-4 mr-2" />
-                Next
+                <ArrowRight className="h-4 w-4" />
+                <span className="sr-only">Next</span>
               </Button>
             </div>
             
-            <div className="px-4 py-2 bg-background/90 rounded-md flex-grow text-center">
-              <p className="text-sm font-medium truncate">{file.name}</p>
-            </div>
-            
-            <div className="flex gap-2">
+            <div className="flex gap-2 w-full justify-center mt-2">
+              <Link href="/">
+                <Button variant="outline" size="sm" className="bg-background/90 hover:bg-background">
+                  <Home className="h-4 w-4" />
+                  <span className="sr-only md:not-sr-only md:ml-2">Home</span>
+                </Button>
+              </Link>
+              
               <Button 
-                variant="outline" 
+                variant="outline"
+                size="sm"
                 className="bg-background/90 hover:bg-background"
                 onClick={(e) => {
                   e.stopPropagation();
                   scrollToTop();
                 }}
               >
-                <ArrowUp className="h-4 w-4 mr-2" />
-                Top
+                <ArrowUp className="h-4 w-4" />
+                <span className="sr-only md:not-sr-only md:ml-2">Top</span>
               </Button>
               
               <Button 
-                variant="outline" 
+                variant="outline"
+                size="sm"
                 className="bg-background/90 hover:bg-background"
                 onClick={(e) => {
                   e.stopPropagation();
                   scrollToBottom();
                 }}
               >
-                <ArrowDown className="h-4 w-4 mr-2" />
-                Bottom
+                <ArrowDown className="h-4 w-4" />
+                <span className="sr-only md:not-sr-only md:ml-2">Bottom</span>
               </Button>
               
               <Button 
-                variant="outline" 
+                variant="outline"
+                size="sm"
                 className="bg-background/90 hover:bg-background" 
                 onClick={(e) => {
                   e.stopPropagation();
                   toggleOverlay();
                 }}
               >
-                Close
+                <span>Close</span>
               </Button>
             </div>
           </div>
@@ -250,6 +255,29 @@ export default function ComicView({ file }: ComicViewProps) {
             />
           </div>
         ))}
+      </div>
+      <div className="flex items-center justify-center gap-4 my-6">
+        <Button 
+          variant="outline" 
+          size="lg" 
+          className="bg-background/90 hover:bg-background"
+          onClick={() => prevFileId && navigateToFile(prevFileId)}
+          disabled={!prevFileId}
+        >
+          <ArrowLeft className="h-5 w-5 mr-2" />
+          <span>Previous</span>
+        </Button>
+        
+        <Button 
+          variant="outline" 
+          size="lg" 
+          className="bg-background/90 hover:bg-background"
+          onClick={() => nextFileId && navigateToFile(nextFileId)}
+          disabled={!nextFileId}
+        >
+          <span>Next</span>
+          <ArrowRight className="h-5 w-5 ml-2" />
+        </Button>
       </div>
     </div>
   );
