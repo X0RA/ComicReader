@@ -31,6 +31,8 @@ export default function FileManager() {
   const [targetFolderId, setTargetFolderId] = useState<string>("root")
   const [breadcrumbs, setBreadcrumbs] = useState<FolderType[]>([])
   const [isLoading, setIsLoading] = useState<boolean>(true)
+  const [sortField, setSortField] = useState<'name' | 'size' | 'createdAt'>('name')
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
 
   // Initialize the database and load data
   useEffect(() => {
@@ -70,6 +72,24 @@ export default function FileManager() {
 
   // Get files in current folder
   const folderFiles = files.filter((file) => file.folderId === currentFolderId)
+
+  // Sort the files based on current sort settings
+  const sortedFiles = [...folderFiles].sort((a, b) => {
+    if (sortField === 'name') {
+      return sortDirection === 'asc' 
+        ? a.name.localeCompare(b.name)
+        : b.name.localeCompare(a.name)
+    } else if (sortField === 'size') {
+      return sortDirection === 'asc' 
+        ? a.size - b.size
+        : b.size - a.size
+    } else {
+      // Sort by createdAt
+      return sortDirection === 'asc' 
+        ? a.createdAt.getTime() - b.createdAt.getTime()
+        : b.createdAt.getTime() - a.createdAt.getTime()
+    }
+  })
 
   // Dropzone setup
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -159,6 +179,40 @@ export default function FileManager() {
     router.push(`/read/${fileId}`)
   }
 
+  // Delete folder
+  const deleteFolder = async (folderId: string) => {
+    if (folderId === "root") {
+      return // Prevent deleting root folder
+    }
+    
+    try {
+      await FileStorage.deleteFolder(folderId)
+      setFolders(folders.filter((folder) => folder.id !== folderId))
+      
+      // If we're currently in the deleted folder, navigate to parent
+      if (currentFolderId === folderId) {
+        const folderToDelete = folders.find(f => f.id === folderId)
+        if (folderToDelete && folderToDelete.parentId) {
+          navigateToFolder(folderToDelete.parentId)
+        } else {
+          navigateToFolder("root")
+        }
+      }
+    } catch (error) {
+      console.error('Error deleting folder:', error)
+    }
+  }
+
+  // Add this function to handle sorting
+  const toggleSort = (field: 'name' | 'size' | 'createdAt') => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortField(field)
+      setSortDirection('asc')
+    }
+  }
+
   return (
     <div className="border rounded-lg shadow-sm">
       {/* Breadcrumb navigation */}
@@ -234,11 +288,23 @@ export default function FileManager() {
               {subFolders.map((folder) => (
                 <div
                   key={folder.id}
+                  className="flex items-center justify-between p-3 border rounded-md hover:bg-muted/50 cursor-pointer"
                   onClick={() => navigateToFolder(folder.id)}
-                  className="flex items-center gap-2 p-3 border rounded-md hover:bg-muted/50 cursor-pointer"
                 >
-                  <Folder className="h-5 w-5 text-muted-foreground" />
-                  <span className="text-sm truncate">{folder.name}</span>
+                  <div className="flex items-center gap-2">
+                    <Folder className="h-5 w-5 text-muted-foreground" />
+                    <span className="text-sm truncate">{folder.name}</span>
+                  </div>
+                  <Button 
+                    size="sm" 
+                    variant="ghost" 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteFolder(folder.id);
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
                 </div>
               ))}
             </div>
@@ -247,10 +313,54 @@ export default function FileManager() {
 
         {/* Files */}
         <div>
-          <h4 className="text-sm font-medium text-muted-foreground mb-2">Files</h4>
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-sm font-medium text-muted-foreground">Files</h4>
+            <div className="flex gap-2">
+              <Button 
+                size="sm" 
+                variant={sortField === 'name' ? 'secondary' : 'outline'} 
+                onClick={() => toggleSort('name')}
+                className="text-xs gap-1"
+              >
+                Name
+                {sortField === 'name' && (
+                  sortDirection === 'asc' ? 
+                    <ChevronRight className="h-3 w-3 rotate-90" /> : 
+                    <ChevronRight className="h-3 w-3 -rotate-90" />
+                )}
+              </Button>
+              <Button 
+                size="sm" 
+                variant={sortField === 'size' ? 'secondary' : 'outline'} 
+                onClick={() => toggleSort('size')}
+                className="text-xs gap-1"
+              >
+                Size
+                {sortField === 'size' && (
+                  sortDirection === 'asc' ? 
+                    <ChevronRight className="h-3 w-3 rotate-90" /> : 
+                    <ChevronRight className="h-3 w-3 -rotate-90" />
+                )}
+              </Button>
+              <Button 
+                size="sm" 
+                variant={sortField === 'createdAt' ? 'secondary' : 'outline'} 
+                onClick={() => toggleSort('createdAt')}
+                className="text-xs gap-1"
+              >
+                Date
+                {sortField === 'createdAt' && (
+                  sortDirection === 'asc' ? 
+                    <ChevronRight className="h-3 w-3 rotate-90" /> : 
+                    <ChevronRight className="h-3 w-3 -rotate-90" />
+                )}
+              </Button>
+            </div>
+          </div>
+          
           {folderFiles.length > 0 ? (
             <div className="border rounded-md overflow-hidden">
-              {folderFiles.map((file) => (
+              {sortedFiles.map((file) => (
                 <div
                   key={file.id}
                   className="flex items-center justify-between p-3 border-b last:border-b-0 hover:bg-muted/50"
