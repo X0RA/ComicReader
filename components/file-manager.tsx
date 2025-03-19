@@ -39,6 +39,8 @@ export default function FileManager() {
   const [isDownloadUrlDialogOpen, setIsDownloadUrlDialogOpen] = useState<boolean>(false)
   const [downloadUrl, setDownloadUrl] = useState<string>("")
   const [isDownloading, setIsDownloading] = useState<boolean>(false)
+  const [downloadProgress, setDownloadProgress] = useState<number>(0)
+  const [downloadProgressText, setDownloadProgressText] = useState<string>("")
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([])
   const [isBulkMoveDialogOpen, setIsBulkMoveDialogOpen] = useState<boolean>(false)
   const [hideReadFiles, setHideReadFiles] = useState<boolean>(false)
@@ -384,23 +386,36 @@ export default function FileManager() {
   }
 
   // Download file from URL
-  const downloadFileFromUrl = async () => {
-    if (!downloadUrl.trim()) {
+  const downloadFileFromUrl = async (urlToDownload?: string) => {
+    const url = urlToDownload || downloadUrl.trim()
+    
+    if (!url) {
       toast.error("Please enter a valid URL")
       return
     }
 
     try {
       setIsDownloading(true)
-      const result: FileDownloadResult = await FileStorage.downloadFileFromUrl(downloadUrl, currentFolderId)
+      setDownloadProgress(0)
+      setDownloadProgressText("Starting download...")
+      
+      const result: FileDownloadResult = await FileStorage.downloadFileFromUrl(
+        url, 
+        currentFolderId, 
+        (progress, text) => {
+          setDownloadProgress(progress)
+          if (text) setDownloadProgressText(text)
+        }
+      )
       
       if (result.success && result.file) {
         setFiles(prevFiles => [...prevFiles, result.file!])
         toast.success("Download Successful", {
           description: `Successfully downloaded and saved: ${result.file.name}`,
         })
-        setDownloadUrl("")
-        setIsDownloadUrlDialogOpen(false)
+        if (!urlToDownload) {
+          setDownloadUrl("")
+        }
       } else {
         toast.error("Download Failed", {
           description: result.message || "Failed to download file from URL",
@@ -413,6 +428,8 @@ export default function FileManager() {
       })
     } finally {
       setIsDownloading(false)
+      setDownloadProgress(0)
+      setDownloadProgressText("")
     }
   }
 
@@ -656,11 +673,72 @@ export default function FileManager() {
                   onChange={(e) => setDownloadUrl(e.target.value)}
                 />
                 <Button 
-                  onClick={downloadFileFromUrl} 
+                  onClick={() => downloadFileFromUrl()} 
                   disabled={isDownloading}
                 >
                   {isDownloading ? "Downloading..." : "Download"}
                 </Button>
+                
+                {/* Progress bar */}
+                {isDownloading && (
+                  <div className="space-y-2 mt-2">
+                    <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-primary transition-all duration-300 ease-in-out" 
+                        style={{ width: `${downloadProgress}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-center text-muted-foreground">
+                      {downloadProgressText || `${downloadProgress}% complete`}
+                    </p>
+                  </div>
+                )}
+                
+                <div className="mt-4 space-y-4">
+                  <h3 className="text-sm font-medium">Quick Downloads: Solo Leveling</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <Button 
+                      size="sm" 
+                      variant="outline" 
+                      onClick={() => downloadFileFromUrl("https://comic.xora.space/files/solo_leveling_00-39.zip")}
+                      disabled={isDownloading}
+                    >
+                      Solo Leveling 00-39
+                    </Button>
+                    <Button 
+                      size="sm" 
+                      variant="outline" 
+                      onClick={() => downloadFileFromUrl("https://comic.xora.space/files/solo_leveling_40-79.zip")}
+                      disabled={isDownloading}
+                    >
+                      Solo Leveling 40-79
+                    </Button>
+                    <Button 
+                      size="sm" 
+                      variant="outline" 
+                      onClick={() => downloadFileFromUrl("https://comic.xora.space/files/solo_leveling_80-119.zip")}
+                      disabled={isDownloading}
+                    >
+                      Solo Leveling 80-119
+                    </Button>
+                    <Button 
+                      size="sm" 
+                      variant="outline" 
+                      onClick={() => downloadFileFromUrl("https://comic.xora.space/files/solo_leveling_120-159.zip")}
+                      disabled={isDownloading}
+                    >
+                      Solo Leveling 120-159
+                    </Button>
+                    <Button 
+                      size="sm" 
+                      variant="outline" 
+                      onClick={() => downloadFileFromUrl("https://comic.xora.space/files/solo_leveling_160-200.zip")}
+                      disabled={isDownloading}
+                    >
+                      Solo Leveling 160-200
+                    </Button>
+                  </div>
+                </div>
               </div>
             </DialogContent>
           </Dialog>

@@ -606,7 +606,11 @@ const FileStorage = (() => {
   }
   
   // Download a file from a URL and store it in the database
-  const downloadFileFromUrl = async (url: string, folderId: string): Promise<FileDownloadResult> => {
+  const downloadFileFromUrl = async (
+    url: string, 
+    folderId: string,
+    progressCallback?: (progress: number, text?: string) => void
+  ): Promise<FileDownloadResult> => {
     if (!db) {
       return {
         file: null,
@@ -615,54 +619,121 @@ const FileStorage = (() => {
       }
     }
     
-    try {
-      // Fetch the file from the URL
-      const response = await fetch(url)
+    return new Promise((resolve) => {
+      // Report initial progress
+      progressCallback?.(0, "Starting download...")
       
-      if (!response.ok) {
-        throw new Error(`Failed to download file: ${response.statusText}`)
-      }
+      // Use XMLHttpRequest for progress tracking
+      const xhr = new XMLHttpRequest()
+      xhr.open('GET', url, true)
+      xhr.responseType = 'arraybuffer'
       
-      // Get file name from URL or Content-Disposition header
-      let fileName = getFileNameFromUrl(url)
-      
-      // Try to get filename from Content-Disposition header
-      const contentDisposition = response.headers.get('content-disposition')
-      if (contentDisposition) {
-        const fileNameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
-        if (fileNameMatch && fileNameMatch[1]) {
-          fileName = fileNameMatch[1].replace(/['"]/g, '')
+      // Track progress
+      xhr.onprogress = (event) => {
+        if (event.lengthComputable) {
+          const percentComplete = Math.round((event.loaded / event.total) * 100)
+          const downloadedSize = formatFileSize(event.loaded)
+          const totalSize = formatFileSize(event.total)
+          progressCallback?.(
+            percentComplete, 
+            `Downloaded ${downloadedSize} of ${totalSize} (${percentComplete}%)`
+          )
+        } else {
+          // If size is unknown, just show the downloaded amount
+          progressCallback?.(
+            50, 
+            `Downloaded ${formatFileSize(event.loaded)} (size unknown)`
+          )
         }
       }
       
-      // Get the file content as ArrayBuffer
-      const fileContent = await response.arrayBuffer()
-      
-      // Get content type from headers
-      const contentType = response.headers.get('content-type') || getMimeType(fileName)
-      
-      // Create a File object
-      const file = new File([fileContent], fileName, {
-        type: contentType,
-        lastModified: Date.now()
-      })
-      
-      // Store the file in the database
-      const storedFile = await storeFile(file, folderId)
-      
-      return {
-        file: storedFile,
-        success: true,
-        message: 'File downloaded and stored successfully'
+      xhr.onerror = () => {
+        resolve({
+          file: null,
+          success: false,
+          message: 'Network error occurred while downloading'
+        })
       }
-    } catch (error) {
-      console.error('Error downloading file:', error)
-      return {
-        file: null,
-        success: false,
-        message: error instanceof Error ? error.message : 'Unknown error'
+      
+      xhr.onabort = () => {
+        resolve({
+          file: null,
+          success: false,
+          message: 'Download was aborted'
+        })
       }
-    }
+      
+      xhr.onload = async function() {
+        try {
+          if (this.status === 200) {
+            // Update progress to 100%
+            progressCallback?.(100, "Processing file...")
+            
+            // Get file name from URL or Content-Disposition header
+            let fileName = getFileNameFromUrl(url)
+            
+            // Try to get filename from Content-Disposition header
+            const contentDisposition = xhr.getResponseHeader('content-disposition')
+            if (contentDisposition) {
+              const fileNameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
+              if (fileNameMatch && fileNameMatch[1]) {
+                fileName = fileNameMatch[1].replace(/['"]/g, '')
+              }
+            }
+            
+            // Get content type from headers
+            const contentType = xhr.getResponseHeader('content-type') || getMimeType(fileName)
+            
+            // Create a File object
+            const file = new File([xhr.response], fileName, {
+              type: contentType,
+              lastModified: Date.now()
+            })
+            
+            progressCallback?.(100, "Saving file...")
+            
+            // Store the file in the database
+            try {
+              const storedFile = await storeFile(file, folderId)
+              resolve({
+                file: storedFile,
+                success: true,
+                message: 'File downloaded and stored successfully'
+              })
+            } catch (error) {
+              resolve({
+                file: null,
+                success: false,
+                message: error instanceof Error ? `Error storing file: ${error.message}` : 'Unknown error storing file'
+              })
+            }
+          } else {
+            resolve({
+              file: null,
+              success: false,
+              message: `Server returned status ${this.status}`
+            })
+          }
+        } catch (error) {
+          resolve({
+            file: null,
+            success: false,
+            message: error instanceof Error ? error.message : 'Unknown error'
+          })
+        }
+      }
+      
+      // Start the download
+      xhr.send()
+    })
+  }
+  
+  // Helper function to format file size
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return bytes + " B"
+    else if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB"
+    else if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + " MB"
+    else return (bytes / 1073741824).toFixed(1) + " GB"
   }
   
   // Helper function to extract file name from URL
