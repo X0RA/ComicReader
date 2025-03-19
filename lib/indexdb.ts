@@ -619,114 +619,197 @@ const FileStorage = (() => {
       }
     }
     
+    // For chunked downloading
+    const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+    
     return new Promise((resolve) => {
       // Report initial progress
       progressCallback?.(0, "Starting download...")
       
-      // Use XMLHttpRequest for progress tracking
-      const xhr = new XMLHttpRequest()
-      xhr.open('GET', url, true)
-      xhr.responseType = 'arraybuffer'
-      
-      // Track progress
-      xhr.onprogress = (event) => {
-        if (event.lengthComputable) {
-          const percentComplete = Math.round((event.loaded / event.total) * 100)
-          const downloadedSize = formatFileSize(event.loaded)
-          const totalSize = formatFileSize(event.total)
-          progressCallback?.(
-            percentComplete, 
-            `Downloaded ${downloadedSize} of ${totalSize} (${percentComplete}%)`
-          )
-        } else {
-          // If size is unknown, just show the downloaded amount
-          progressCallback?.(
-            50, 
-            `Downloaded ${formatFileSize(event.loaded)} (size unknown)`
-          )
-        }
-      }
-      
-      xhr.onerror = () => {
-        resolve({
-          file: null,
-          success: false,
-          message: 'Network error occurred while downloading'
-        })
-      }
-      
-      xhr.onabort = () => {
-        resolve({
-          file: null,
-          success: false,
-          message: 'Download was aborted'
-        })
-      }
-      
-      xhr.onload = async function() {
-        try {
-          if (this.status === 200) {
-            // Update progress to 100%
-            progressCallback?.(100, "Processing file...")
-            
-            // Get file name from URL or Content-Disposition header
-            let fileName = getFileNameFromUrl(url)
-            
-            // Try to get filename from Content-Disposition header
-            const contentDisposition = xhr.getResponseHeader('content-disposition')
-            if (contentDisposition) {
-              const fileNameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
-              if (fileNameMatch && fileNameMatch[1]) {
-                fileName = fileNameMatch[1].replace(/['"]/g, '')
-              }
-            }
-            
-            // Get content type from headers
-            const contentType = xhr.getResponseHeader('content-type') || getMimeType(fileName)
-            
-            // Create a File object
-            const file = new File([xhr.response], fileName, {
-              type: contentType,
-              lastModified: Date.now()
-            })
-            
-            progressCallback?.(100, "Saving file...")
-            
-            // Store the file in the database
-            try {
-              const storedFile = await storeFile(file, folderId)
-              resolve({
-                file: storedFile,
-                success: true,
-                message: 'File downloaded and stored successfully'
-              })
-            } catch (error) {
-              resolve({
-                file: null,
-                success: false,
-                message: error instanceof Error ? `Error storing file: ${error.message}` : 'Unknown error storing file'
-              })
-            }
+      // First, make a HEAD request to get file size and other metadata
+      fetch(url, { method: 'HEAD' })
+        .then(response => {
+          // Get content length if available
+          const contentLength = response.headers.get('content-length');
+          const totalSize = contentLength ? parseInt(contentLength, 10) : null;
+          
+          // Get content type
+          const contentType = response.headers.get('content-type') || '';
+          
+          // Try to get filename from Content-Disposition header
+          const contentDisposition = response.headers.get('content-disposition') || '';
+          let fileName = getFileNameFromUrl(url);
+          const fileNameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+          if (fileNameMatch && fileNameMatch[1]) {
+            fileName = fileNameMatch[1].replace(/['"]/g, '');
+          }
+          
+          // Prepare to download in chunks
+          progressCallback?.(0, "Preparing download...");
+          
+          if (totalSize && totalSize > CHUNK_SIZE) {
+            // Use chunked downloading for large files
+            return downloadInChunks(url, fileName, contentType, totalSize, progressCallback);
           } else {
+            // Use simple downloading for smaller files
+            return simpleDownload(url, fileName, contentType, progressCallback);
+          }
+        })
+        .then(async fileBlob => {
+          try {
+            progressCallback?.(100, "Saving file...");
+            
+            // Convert Blob to File
+            const file = new File([fileBlob], fileBlob.name, {
+              type: fileBlob.type,
+              lastModified: Date.now()
+            });
+            
+            // Store in IndexedDB
+            const storedFile = await storeFile(file, folderId);
+            resolve({
+              file: storedFile,
+              success: true,
+              message: 'File downloaded and stored successfully'
+            });
+          } catch (error) {
             resolve({
               file: null,
               success: false,
-              message: `Server returned status ${this.status}`
-            })
+              message: error instanceof Error ? `Error storing file: ${error.message}` : 'Unknown error storing file'
+            });
           }
-        } catch (error) {
+        })
+        .catch(error => {
           resolve({
             file: null,
             success: false,
             message: error instanceof Error ? error.message : 'Unknown error'
-          })
-        }
-      }
+          });
+        });
+    });
+  };
+  
+  // Helper function for downloading smaller files
+  const simpleDownload = (
+    url: string,
+    fileName: string,
+    contentType: string,
+    progressCallback?: (progress: number, text?: string) => void
+  ): Promise<File> => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', url, true);
+      xhr.responseType = 'blob';
       
-      // Start the download
-      xhr.send()
-    })
-  }
+      xhr.onprogress = (event) => {
+        if (event.lengthComputable) {
+          const percentComplete = Math.round((event.loaded / event.total) * 100);
+          const downloadedSize = formatFileSize(event.loaded);
+          const totalSize = formatFileSize(event.total);
+          progressCallback?.(
+            percentComplete, 
+            `Downloaded ${downloadedSize} of ${totalSize} (${percentComplete}%)`
+          );
+        } else {
+          progressCallback?.(
+            50, 
+            `Downloaded ${formatFileSize(event.loaded)} (size unknown)`
+          );
+        }
+      };
+      
+      xhr.onload = function() {
+        if (this.status === 200) {
+          // Create a File object (which is a Blob with a name property)
+          const file = new File([xhr.response], fileName, { type: contentType });
+          resolve(file);
+        } else {
+          reject(new Error(`Server returned status ${this.status}`));
+        }
+      };
+      
+      xhr.onerror = () => reject(new Error('Network error occurred while downloading'));
+      xhr.onabort = () => reject(new Error('Download was aborted'));
+      
+      xhr.send();
+    });
+  };
+  
+  // Helper function for downloading large files in chunks
+  const downloadInChunks = (
+    url: string,
+    fileName: string,
+    contentType: string,
+    totalSize: number,
+    progressCallback?: (progress: number, text?: string) => void
+  ): Promise<File> => {
+    return new Promise((resolve, reject) => {
+      const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+      const chunks: Blob[] = [];
+      let loaded = 0;
+      
+      // Function to download a chunk
+      const downloadChunk = (start: number, end: number): Promise<void> => {
+        return new Promise((resolveChunk, rejectChunk) => {
+          const range = `bytes=${start}-${end-1}`;
+          
+          fetch(url, {
+            headers: { Range: range }
+          })
+          .then(response => {
+            if (response.status === 206) { // Partial content
+              return response.blob();
+            } else if (response.status === 200) {
+              // Server doesn't support range requests, but we'll still process the chunk
+              return response.blob();
+            } else {
+              throw new Error(`Server returned status ${response.status}`);
+            }
+          })
+          .then(blob => {
+            chunks.push(blob);
+            loaded += blob.size;
+            
+            // Update progress
+            const percentComplete = Math.round((loaded / totalSize) * 100);
+            progressCallback?.(
+              percentComplete,
+              `Downloaded ${formatFileSize(loaded)} of ${formatFileSize(totalSize)} (${percentComplete}%)`
+            );
+            
+            resolveChunk();
+          })
+          .catch(rejectChunk);
+        });
+      };
+      
+      // Sequentially download all chunks to avoid overwhelming the device
+      const downloadAllChunks = async () => {
+        let start = 0;
+        
+        while (start < totalSize) {
+          const end = Math.min(start + CHUNK_SIZE, totalSize);
+          try {
+            await downloadChunk(start, end);
+            start = end;
+          } catch (error) {
+            reject(error);
+            return;
+          }
+        }
+        
+        // Combine all chunks and create a File
+        progressCallback?.(100, "Processing downloaded file...");
+        const combinedBlob = new Blob(chunks, { type: contentType });
+        const file = new File([combinedBlob], fileName, { type: contentType });
+        resolve(file);
+      };
+      
+      // Start the chunked download process
+      downloadAllChunks();
+    });
+  };
   
   // Helper function to format file size
   const formatFileSize = (bytes: number): string => {
