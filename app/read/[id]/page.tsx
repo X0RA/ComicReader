@@ -158,8 +158,7 @@ export default function ReadFilePage({ params }: { params: Promise<{ id: string 
   };
 
   return (
-    <div className="max-w-4xl mx-auto py-8 px-4">
-      <div className="border rounded-lg shadow-sm">
+      <div className="">
         {/* header */}
         <div className="border-b p-4 bg-muted/20 relative">
           <Button variant="ghost" onClick={() => router.back()} className="absolute left-4 top-4">
@@ -180,6 +179,5 @@ export default function ReadFilePage({ params }: { params: Promise<{ id: string 
 
         {renderFileViewer()}
       </div>
-    </div>
   )
 }
