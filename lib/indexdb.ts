@@ -528,7 +528,7 @@ const FileStorage = (() => {
     
     // Check by file extension
     const fileName = file.name.toLowerCase()
-    return fileName.endsWith('.zip') || fileName.endsWith('.cbz')
+    return fileName.endsWith('.zip')
   }
 
   // Extract a ZIP file and store its contents in the database
