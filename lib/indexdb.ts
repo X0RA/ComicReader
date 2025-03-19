@@ -27,6 +27,13 @@ export type ZipExtractionResult = {
   success: boolean
 }
 
+// Result type for file download
+export type FileDownloadResult = {
+  file: FileType | null
+  success: boolean
+  message: string
+}
+
 const FileStorage = (() => {
   const DB_NAME = 'fileStorageDB'
   const DB_VERSION = 1
@@ -597,6 +604,88 @@ const FileStorage = (() => {
     }
   }
   
+  // Download a file from a URL and store it in the database
+  const downloadFileFromUrl = async (url: string, folderId: string): Promise<FileDownloadResult> => {
+    if (!db) {
+      return {
+        file: null,
+        success: false,
+        message: 'Database not initialized'
+      }
+    }
+    
+    try {
+      // Fetch the file from the URL
+      const response = await fetch(url)
+      
+      if (!response.ok) {
+        throw new Error(`Failed to download file: ${response.statusText}`)
+      }
+      
+      // Get file name from URL or Content-Disposition header
+      let fileName = getFileNameFromUrl(url)
+      
+      // Try to get filename from Content-Disposition header
+      const contentDisposition = response.headers.get('content-disposition')
+      if (contentDisposition) {
+        const fileNameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
+        if (fileNameMatch && fileNameMatch[1]) {
+          fileName = fileNameMatch[1].replace(/['"]/g, '')
+        }
+      }
+      
+      // Get the file content as ArrayBuffer
+      const fileContent = await response.arrayBuffer()
+      
+      // Get content type from headers
+      const contentType = response.headers.get('content-type') || getMimeType(fileName)
+      
+      // Create a File object
+      const file = new File([fileContent], fileName, {
+        type: contentType,
+        lastModified: Date.now()
+      })
+      
+      // Store the file in the database
+      const storedFile = await storeFile(file, folderId)
+      
+      return {
+        file: storedFile,
+        success: true,
+        message: 'File downloaded and stored successfully'
+      }
+    } catch (error) {
+      console.error('Error downloading file:', error)
+      return {
+        file: null,
+        success: false,
+        message: error instanceof Error ? error.message : 'Unknown error'
+      }
+    }
+  }
+  
+  // Helper function to extract file name from URL
+  const getFileNameFromUrl = (url: string): string => {
+    try {
+      // Try to get the filename from the URL path
+      const urlObj = new URL(url)
+      const pathname = urlObj.pathname
+      const segments = pathname.split('/')
+      const lastSegment = segments[segments.length - 1]
+      
+      // If the last segment is empty or doesn't contain a filename pattern, use a default name
+      if (lastSegment && lastSegment.includes('.')) {
+        // URL decode the filename in case it has special characters
+        return decodeURIComponent(lastSegment)
+      }
+    } catch (e) {
+      console.error('Error parsing URL:', e)
+    }
+    
+    // Default filename if we couldn't extract one from the URL
+    return `downloaded_file_${Date.now()}`
+  }
+  
   // Helper function to determine MIME type from filename
   const getMimeType = (fileName: string): string => {
     const extension = fileName.split('.').pop()?.toLowerCase() || ''
@@ -645,7 +734,9 @@ const FileStorage = (() => {
     moveFolder,
     // Zip operations
     isZipFile,
-    extractZipFile
+    extractZipFile,
+    // URL download
+    downloadFileFromUrl
   }
 })()
 

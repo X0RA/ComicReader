@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ChevronRight, File, FileText, Folder, FolderPlus, Home, Trash2, Upload, Archive } from "lucide-react"
+import { ChevronRight, File, FileText, Folder, FolderPlus, Home, Trash2, Upload, Archive, Download } from "lucide-react"
 import { cn } from "@/lib/utils"
-import FileStorage, { FileType, FolderType, ZipExtractionResult } from "@/lib/indexdb"
+import FileStorage, { FileType, FolderType, ZipExtractionResult, FileDownloadResult } from "@/lib/indexdb"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 
@@ -35,6 +35,9 @@ export default function FileManager() {
   const [sortField, setSortField] = useState<'name' | 'size' | 'createdAt'>('name')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
   const [isExtracting, setIsExtracting] = useState<boolean>(false)
+  const [isDownloadUrlDialogOpen, setIsDownloadUrlDialogOpen] = useState<boolean>(false)
+  const [downloadUrl, setDownloadUrl] = useState<string>("")
+  const [isDownloading, setIsDownloading] = useState<boolean>(false)
 
   // Initialize the database and load data
   useEffect(() => {
@@ -247,6 +250,39 @@ export default function FileManager() {
     return FileStorage.isZipFile(file)
   }
 
+  // Download file from URL
+  const downloadFileFromUrl = async () => {
+    if (!downloadUrl.trim()) {
+      toast.error("Please enter a valid URL")
+      return
+    }
+
+    try {
+      setIsDownloading(true)
+      const result: FileDownloadResult = await FileStorage.downloadFileFromUrl(downloadUrl, currentFolderId)
+      
+      if (result.success && result.file) {
+        setFiles(prevFiles => [...prevFiles, result.file!])
+        toast.success("Download Successful", {
+          description: `Successfully downloaded and saved: ${result.file.name}`,
+        })
+        setDownloadUrl("")
+        setIsDownloadUrlDialogOpen(false)
+      } else {
+        toast.error("Download Failed", {
+          description: result.message || "Failed to download file from URL",
+        })
+      }
+    } catch (error) {
+      console.error('Error downloading file from URL:', error)
+      toast.error("Download Failed", {
+        description: error instanceof Error ? error.message : "An unknown error occurred",
+      })
+    } finally {
+      setIsDownloading(false)
+    }
+  }
+
   return (
     <div className="border rounded-lg shadow-sm">
       {/* Breadcrumb navigation */}
@@ -306,6 +342,33 @@ export default function FileManager() {
                   onChange={(e) => setNewFolderName(e.target.value)}
                 />
                 <Button onClick={createNewFolder}>Create</Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={isDownloadUrlDialogOpen} onOpenChange={setIsDownloadUrlDialogOpen}>
+            <DialogTrigger asChild>
+              <Button size="sm" variant="outline" className="gap-1">
+                <Download className="h-4 w-4" />
+                Download URL
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Download File from URL</DialogTitle>
+              </DialogHeader>
+              <div className="grid gap-4 py-4">
+                <Input
+                  placeholder="Enter file URL"
+                  value={downloadUrl}
+                  onChange={(e) => setDownloadUrl(e.target.value)}
+                />
+                <Button 
+                  onClick={downloadFileFromUrl} 
+                  disabled={isDownloading}
+                >
+                  {isDownloading ? "Downloading..." : "Download"}
+                </Button>
               </div>
             </DialogContent>
           </Dialog>
