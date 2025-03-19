@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ChevronRight, File, FileText, Folder, FolderPlus, Home, Trash2, Upload, Archive, Download, CheckSquare, Square, CheckCircle2, BookOpen } from "lucide-react"
+import { ChevronRight, File, FileText, Folder, FolderPlus, Home, Trash2, Upload, Archive, Download, CheckSquare, Square, CheckCircle2, BookOpen, Book } from "lucide-react"
 import { cn } from "@/lib/utils"
 import FileStorage, { FileType, FolderType, ZipExtractionResult, FileDownloadResult } from "@/lib/indexdb"
 import { useRouter } from "next/navigation"
@@ -44,6 +44,7 @@ export default function FileManager() {
   const [hideReadFiles, setHideReadFiles] = useState<boolean>(false)
   const [isClearDataDialogOpen, setIsClearDataDialogOpen] = useState<boolean>(false)
   const [isClearing, setIsClearing] = useState<boolean>(false)
+  const [lastOpenedComic, setLastOpenedComic] = useState<FileType | null>(null)
 
   // Initialize the database and load data
   useEffect(() => {
@@ -62,6 +63,19 @@ export default function FileManager() {
         const rootFolder = allFolders.find(folder => folder.id === 'root')
         if (rootFolder) {
           setBreadcrumbs([rootFolder])
+        }
+        
+        // Load last opened comic
+        const lastComicId = await FileStorage.getLastOpenedComic()
+        if (lastComicId) {
+          try {
+            const comicFile = await FileStorage.getFile(lastComicId)
+            setLastOpenedComic(comicFile)
+          } catch (err) {
+            console.error('Last opened comic not found:', err)
+            // Clear the invalid reference if the file no longer exists
+            await FileStorage.setLastOpenedComic('')
+          }
         }
         
         setIsLoading(false)
@@ -496,6 +510,37 @@ export default function FileManager() {
     }
   }
 
+  // Add this before the Dropzone in the return statement
+  const renderLastOpenedComic = () => {
+    if (!lastOpenedComic) return null
+    
+    return (
+      <div className="mb-6 p-4 border-b">
+        <h4 className="text-sm font-medium mb-3">Continue Reading</h4>
+        <div 
+          className="flex items-center p-3 border rounded-md hover:bg-muted/50 cursor-pointer"
+          onClick={() => readFile(lastOpenedComic.id)}
+        >
+          <div className="flex items-center gap-3 flex-1">
+            <Book className="h-5 w-5 text-primary" />
+            <div>
+              <p className="font-medium">{lastOpenedComic.name}</p>
+              <p className="text-xs text-muted-foreground">
+                Last read: {new Date().toLocaleDateString()}
+              </p>
+            </div>
+          </div>
+          <Button size="sm" variant="ghost" onClick={(e) => {
+            e.stopPropagation();
+            readFile(lastOpenedComic.id);
+          }}>
+            Continue
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="border rounded-lg shadow-sm ">
       {/* Breadcrumb navigation */}
@@ -545,6 +590,9 @@ export default function FileManager() {
           </Dialog>
         </div>
       </div>
+
+      {/* Last opened comic */}
+      {!isLoading && renderLastOpenedComic()}
 
       {/* Dropzone */}
       <div

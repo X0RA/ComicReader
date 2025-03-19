@@ -121,6 +121,20 @@ export default function ComicView({ file }: ComicViewProps) {
     };
   }, [file]);
 
+  // Set this file as the last opened comic when component mounts
+  useEffect(() => {
+    const updateLastOpenedComic = async () => {
+      try {
+        // Mark as last opened comic
+        await FileStorage.setLastOpenedComic(file.id)
+      } catch (error) {
+        console.error('Error updating last opened comic:', error)
+      }
+    }
+    
+    updateLastOpenedComic()
+  }, [file.id])
+
   if (loading) {
     return (
       <div className="flex items-center justify-center p-12">

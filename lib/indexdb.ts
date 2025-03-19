@@ -833,6 +833,59 @@ const FileStorage = (() => {
     })
   }
 
+  // Set the last opened comic file
+  const setLastOpenedComic = (fileId: string): Promise<boolean> => {
+    return new Promise((resolve, reject) => {
+      if (!db) {
+        reject(new Error('Database not initialized'))
+        return
+      }
+      
+      const transaction = db.transaction([METADATA_STORE], 'readwrite')
+      const store = transaction.objectStore(METADATA_STORE)
+      
+      // Update or add the lastOpenedComic entry
+      const request = store.put({ key: 'lastOpenedComic', value: fileId })
+      
+      request.onsuccess = () => {
+        resolve(true)
+      }
+      
+      request.onerror = (event) => {
+        console.error('Error setting last opened comic:', (event.target as IDBRequest).error)
+        reject((event.target as IDBRequest).error)
+      }
+    })
+  }
+
+  // Get the last opened comic file ID
+  const getLastOpenedComic = (): Promise<string | null> => {
+    return new Promise((resolve, reject) => {
+      if (!db) {
+        reject(new Error('Database not initialized'))
+        return
+      }
+      
+      const transaction = db.transaction([METADATA_STORE], 'readonly')
+      const store = transaction.objectStore(METADATA_STORE)
+      const request = store.get('lastOpenedComic')
+      
+      request.onsuccess = (event) => {
+        const result = (event.target as IDBRequest).result
+        if (result) {
+          resolve(result.value)
+        } else {
+          resolve(null) // No last opened comic found
+        }
+      }
+      
+      request.onerror = (event) => {
+        console.error('Error getting last opened comic:', (event.target as IDBRequest).error)
+        reject((event.target as IDBRequest).error)
+      }
+    })
+  }
+
   // Return public methods
   return {
     init,
@@ -858,7 +911,10 @@ const FileStorage = (() => {
     isZipFile,
     extractZipFile,
     // URL download
-    downloadFileFromUrl
+    downloadFileFromUrl,
+    // Last opened comic operations
+    setLastOpenedComic,
+    getLastOpenedComic,
   }
 })()
 
