@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ChevronRight, File, FileText, Folder, FolderPlus, Home, Trash2, Upload } from "lucide-react"
 import { cn } from "@/lib/utils"
 import FileStorage, { FileType, FolderType } from "@/lib/indexdb"
+import { useRouter } from "next/navigation"
 
 // Helper functions
 const formatFileSize = (bytes: number): string => {
@@ -19,6 +20,7 @@ const formatFileSize = (bytes: number): string => {
 }
 
 export default function FileManager() {
+  const router = useRouter()
   const [files, setFiles] = useState<FileType[]>([])
   const [folders, setFolders] = useState<FolderType[]>([])
   const [currentFolderId, setCurrentFolderId] = useState<string>("root")
@@ -153,24 +155,8 @@ export default function FileManager() {
 
   // Read file
   const readFile = async (fileId: string) => {
-    try {
-      const file = await FileStorage.getFile(fileId)
-      if (file) {
-        // Create a blob from the file content
-        const blob = new Blob([file.content as ArrayBuffer], { type: file.type })
-        
-        // Create a URL for the blob
-        const url = URL.createObjectURL(blob)
-        
-        // Open in a new tab or download
-        window.open(url, '_blank')
-        
-        // Clean up the URL
-        setTimeout(() => URL.revokeObjectURL(url), 1000)
-      }
-    } catch (error) {
-      console.error('Error reading file:', error)
-    }
+    // Navigate to the read page with the file ID
+    router.push(`/read/${fileId}`)
   }
 
   return (
