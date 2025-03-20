@@ -12,6 +12,7 @@ import FileStorage, { FileType, FolderType, ZipExtractionResult, FileDownloadRes
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { Checkbox } from "@/components/ui/checkbox"
+import { listFiles, FolderStructure, FolderBatch, FileLink } from "@/lib/getComics"
 
 // Helper functions
 const formatFileSize = (bytes: number): string => {
@@ -41,12 +42,26 @@ export default function FileManager() {
   const [isDownloading, setIsDownloading] = useState<boolean>(false)
   const [downloadProgress, setDownloadProgress] = useState<number>(0)
   const [downloadProgressText, setDownloadProgressText] = useState<string>("")
+  const [currentFileProgress, setCurrentFileProgress] = useState<number>(0)
+  const [currentFileIndex, setCurrentFileIndex] = useState<number>(0)
+  const [totalFilesToDownload, setTotalFilesToDownload] = useState<number>(0)
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([])
   const [isBulkMoveDialogOpen, setIsBulkMoveDialogOpen] = useState<boolean>(false)
   const [hideReadFiles, setHideReadFiles] = useState<boolean>(false)
   const [isClearDataDialogOpen, setIsClearDataDialogOpen] = useState<boolean>(false)
   const [isClearing, setIsClearing] = useState<boolean>(false)
   const [lastOpenedComic, setLastOpenedComic] = useState<FileType | null>(null)
+
+  const [folderStructure, setFolderStructure] = useState<FolderStructure | null>(null)
+
+
+  // Get the folder structure from the server
+  useEffect(() => {
+    listFiles().then((folderStructure: FolderStructure) => {
+      setFolderStructure(folderStructure)
+      console.log(folderStructure)
+    })
+  }, [])
 
   // Initialize the database and load data
   useEffect(() => {
@@ -558,6 +573,61 @@ export default function FileManager() {
     )
   }
 
+  // Add this function to handle batch downloads for a folder's batches
+  const downloadBatchFiles = async (folderName: string, batch: FolderBatch) => {
+    try {
+      // Extract the actual file URLs from the batch
+      const urlsToDownload = batch.files.map((file: FileLink) => file.url);
+      
+      setIsDownloading(true);
+      setDownloadProgress(0);
+      setCurrentFileProgress(0);
+      setCurrentFileIndex(1);
+      setTotalFilesToDownload(urlsToDownload.length);
+      setDownloadProgressText(`Starting download of ${folderName} ${batch.range}...`);
+      
+      const result = await FileStorage.downloadFilesSequentially(
+        urlsToDownload,
+        currentFolderId,
+        (overallProgress, fileProgress, fileIndex, totalFiles, statusText) => {
+          setDownloadProgress(overallProgress);
+          setCurrentFileProgress(fileProgress);
+          setCurrentFileIndex(fileIndex);
+          setTotalFilesToDownload(totalFiles);
+          setDownloadProgressText(statusText);
+        }
+      );
+      
+      // Update files state with newly downloaded files
+      if (result.successfulFiles.length > 0) {
+        setFiles(prevFiles => [...prevFiles, ...result.successfulFiles]);
+        
+        toast.success("Download Successful", {
+          description: `Successfully downloaded ${result.successfulFiles.length} of ${urlsToDownload.length} files`,
+        });
+      }
+      
+      // Show errors if any
+      if (result.failedUrls.length > 0) {
+        toast.error("Some Downloads Failed", {
+          description: `Failed to download ${result.failedUrls.length} files`,
+        });
+      }
+    } catch (error) {
+      console.error('Error downloading batch:', error);
+      toast.error("Download Failed", {
+        description: error instanceof Error ? error.message : "An unknown error occurred",
+      });
+    } finally {
+      setIsDownloading(false);
+      setDownloadProgress(0);
+      setCurrentFileProgress(0);
+      setCurrentFileIndex(0);
+      setTotalFilesToDownload(0);
+      setDownloadProgressText("");
+    }
+  };
+
   return (
     <div className="border rounded-lg shadow-sm ">
       {/* Breadcrumb navigation */}
@@ -682,62 +752,84 @@ export default function FileManager() {
                 {/* Progress bar */}
                 {isDownloading && (
                   <div className="space-y-2 mt-2">
-                    <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-primary transition-all duration-300 ease-in-out" 
-                        style={{ width: `${downloadProgress}%` }}
-                      />
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span>Overall Progress</span>
+                        <span>{downloadProgress}%</span>
+                      </div>
+                      <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-primary transition-all duration-300 ease-in-out" 
+                          style={{ width: `${downloadProgress}%` }}
+                        />
+                      </div>
                     </div>
+                    
+                    {totalFilesToDownload > 1 && (
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span>Current File ({currentFileIndex}/{totalFilesToDownload})</span>
+                          <span>{currentFileProgress}%</span>
+                        </div>
+                        <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-secondary transition-all duration-300 ease-in-out" 
+                            style={{ width: `${currentFileProgress}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    
                     <p className="text-xs text-center text-muted-foreground">
-                      {downloadProgressText || `${downloadProgress}% complete`}
+                      {downloadProgressText}
                     </p>
                   </div>
                 )}
                 
                 <div className="mt-4 space-y-4">
-                  <h3 className="text-sm font-medium">Quick Downloads: Solo Leveling</h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <Button 
-                      size="sm" 
-                      variant="outline" 
-                      onClick={() => downloadFileFromUrl("https://comic.xora.space/files/solo_leveling_00-39.zip")}
-                      disabled={isDownloading}
-                    >
-                      Solo Leveling 00-39
-                    </Button>
-                    <Button 
-                      size="sm" 
-                      variant="outline" 
-                      onClick={() => downloadFileFromUrl("https://comic.xora.space/files/solo_leveling_40-79.zip")}
-                      disabled={isDownloading}
-                    >
-                      Solo Leveling 40-79
-                    </Button>
-                    <Button 
-                      size="sm" 
-                      variant="outline" 
-                      onClick={() => downloadFileFromUrl("https://comic.xora.space/files/solo_leveling_80-119.zip")}
-                      disabled={isDownloading}
-                    >
-                      Solo Leveling 80-119
-                    </Button>
-                    <Button 
-                      size="sm" 
-                      variant="outline" 
-                      onClick={() => downloadFileFromUrl("https://comic.xora.space/files/solo_leveling_120-159.zip")}
-                      disabled={isDownloading}
-                    >
-                      Solo Leveling 120-159
-                    </Button>
-                    <Button 
-                      size="sm" 
-                      variant="outline" 
-                      onClick={() => downloadFileFromUrl("https://comic.xora.space/files/solo_leveling_160-200.zip")}
-                      disabled={isDownloading}
-                    >
-                      Solo Leveling 160-200
-                    </Button>
-                  </div>
+                  <h3 className="text-sm font-medium">Quick Downloads: Comics Collection</h3>
+                  
+                  {folderStructure ? (
+                    Object.entries(folderStructure).length > 0 ? (
+                      <div className="space-y-4">
+                        {Object.entries(folderStructure).map(([folderName, batches]) => (
+                          <div key={folderName} className="space-y-2">
+                            <h4 className="text-xs font-medium">{folderName}</h4>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              {batches.map((batch) => (
+                                <Button 
+                                  key={`${folderName}-${batch.range}`}
+                                  size="sm" 
+                                  variant="outline" 
+                                  onClick={() => downloadBatchFiles(folderName, batch)}
+                                  disabled={isDownloading}
+                                >
+                                  {folderName} {batch.range}
+                                </Button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No comic collections available</p>
+                    )
+                  ) : (
+                    <div className="flex items-center justify-center p-4">
+                      <div className="animate-spin h-5 w-5 border-2 border-primary border-t-transparent rounded-full mr-2"></div>
+                      <span className="text-sm">Loading comic collections...</span>
+                    </div>
+                  )}
+                  
+                  {/* Keep the testing button for development purposes */}
+                  <Button 
+                    size="sm" 
+                    variant="outline" 
+                    onClick={() => downloadFileFromUrl("https://comic.xora.space/files/solo_leveling_testing.zip")}
+                    disabled={isDownloading}
+                  >
+                    Testing
+                  </Button>
                 </div>
               </div>
             </DialogContent>

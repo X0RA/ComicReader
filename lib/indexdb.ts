@@ -35,6 +35,13 @@ export type FileDownloadResult = {
   message: string
 }
 
+// Result type for batch download
+export type BatchDownloadResult = {
+  successfulFiles: FileType[]
+  failedUrls: {url: string, error: string}[]
+  overallSuccess: boolean
+}
+
 const FileStorage = (() => {
   const DB_NAME = 'fileStorageDB'
   const DB_VERSION = 1
@@ -605,9 +612,42 @@ const FileStorage = (() => {
     }
   }
   
-  // Download a file from a URL and store it in the database
+  // Helper to store a downloaded Blob as a File in IndexedDB
+  const storeDownloadedBlob = async (
+    blob: Blob,
+    fileName: string,
+    contentType: string,
+    folderId: string,
+    progressCallback?: (progress: number, text?: string) => void
+  ): Promise<FileDownloadResult> => {
+    try {
+      progressCallback?.(100, "Saving file...");
+      const file = new File([blob], fileName, {
+        type: contentType,
+        lastModified: Date.now()
+      });
+      const storedFile = await storeFile(file, folderId);
+      return {
+        file: storedFile,
+        success: true,
+        message: "File downloaded and stored successfully"
+      };
+    } catch (error) {
+      console.error("Error storing file:", error);
+      return {
+        file: null,
+        success: false,
+        message:
+          error instanceof Error
+            ? `Error storing file: ${error.message}`
+            : "Unknown error storing file"
+      };
+    }
+  };
+
+  // Refactored downloadFileFromUrl function using streaming.
   const downloadFileFromUrl = async (
-    url: string, 
+    url: string,
     folderId: string,
     progressCallback?: (progress: number, text?: string) => void
   ): Promise<FileDownloadResult> => {
@@ -615,79 +655,88 @@ const FileStorage = (() => {
       return {
         file: null,
         success: false,
-        message: 'Database not initialized'
+        message: "Database not initialized"
+      };
+    }
+
+    try {
+      // Report initial progress
+      progressCallback?.(0, "Starting download...");
+
+      // Perform HEAD request to obtain metadata (total size, content type, etc.)
+      const headResponse = await fetch(url, { method: "HEAD" });
+      const contentLength = headResponse.headers.get("content-length");
+      const totalSize = contentLength ? parseInt(contentLength, 10) : null;
+      const contentType = headResponse.headers.get("content-type") || "";
+      let fileName = getFileNameFromUrl(url);
+      const contentDisposition = headResponse.headers.get("content-disposition") || "";
+      const fileNameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+      if (fileNameMatch && fileNameMatch[1]) {
+        fileName = fileNameMatch[1].replace(/['"]/g, "");
+      }
+
+      progressCallback?.(0, "Downloading file...");
+
+      // Start fetching the file with streaming support.
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Server returned status ${response.status}`);
+      }
+      
+      if (!response.body) {
+        // If streaming isn't supported, fall back to a simple download.
+        progressCallback?.(0, "Streaming not supported, using simple download...");
+        const blob = await simpleDownload(url, fileName, contentType, progressCallback);
+        return storeDownloadedBlob(blob, fileName, contentType, folderId, progressCallback);
+      }
+
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let receivedLength = 0;
+
+      // Read the data as it comes in.
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          chunks.push(value);
+          receivedLength += value.length;
+          if (totalSize) {
+            const percent = Math.round((receivedLength / totalSize) * 100);
+            progressCallback?.(
+              percent,
+              `Downloaded ${formatFileSize(receivedLength)} of ${formatFileSize(totalSize)} (${percent}%)`
+            );
+          } else {
+            progressCallback?.(0, `Downloaded ${formatFileSize(receivedLength)}`);
+          }
+        }
+      }
+
+      progressCallback?.(100, "Finalizing download...");
+
+      // Create a Blob from the streamed chunks.
+      const blob = new Blob(chunks, { type: contentType });
+      return storeDownloadedBlob(blob, fileName, contentType, folderId, progressCallback);
+    } catch (error) {
+      console.error("Download error:", error);
+      
+      // Try simple download as a last resort fallback
+      try {
+        progressCallback?.(0, "Streaming failed, trying simple download...");
+        const contentType = "";  // Will be detected by simpleDownload
+        const fileName = getFileNameFromUrl(url);
+        const blob = await simpleDownload(url, fileName, contentType, progressCallback);
+        return storeDownloadedBlob(blob, fileName, blob.type, folderId, progressCallback);
+      } catch (fallbackError) {
+        console.error("Fallback download failed:", fallbackError);
+        return {
+          file: null,
+          success: false,
+          message: error instanceof Error ? error.message : "Unknown error"
+        };
       }
     }
-    
-    // For chunked downloading
-    const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
-    
-    return new Promise((resolve) => {
-      // Report initial progress
-      progressCallback?.(0, "Starting download...")
-      
-      // First, make a HEAD request to get file size and other metadata
-      fetch(url, { method: 'HEAD' })
-        .then(response => {
-          // Get content length if available
-          const contentLength = response.headers.get('content-length');
-          const totalSize = contentLength ? parseInt(contentLength, 10) : null;
-          
-          // Get content type
-          const contentType = response.headers.get('content-type') || '';
-          
-          // Try to get filename from Content-Disposition header
-          const contentDisposition = response.headers.get('content-disposition') || '';
-          let fileName = getFileNameFromUrl(url);
-          const fileNameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
-          if (fileNameMatch && fileNameMatch[1]) {
-            fileName = fileNameMatch[1].replace(/['"]/g, '');
-          }
-          
-          // Prepare to download in chunks
-          progressCallback?.(0, "Preparing download...");
-          
-          if (totalSize && totalSize > CHUNK_SIZE) {
-            // Use chunked downloading for large files
-            return downloadInChunks(url, fileName, contentType, totalSize, progressCallback);
-          } else {
-            // Use simple downloading for smaller files
-            return simpleDownload(url, fileName, contentType, progressCallback);
-          }
-        })
-        .then(async fileBlob => {
-          try {
-            progressCallback?.(100, "Saving file...");
-            
-            // Convert Blob to File
-            const file = new File([fileBlob], fileBlob.name, {
-              type: fileBlob.type,
-              lastModified: Date.now()
-            });
-            
-            // Store in IndexedDB
-            const storedFile = await storeFile(file, folderId);
-            resolve({
-              file: storedFile,
-              success: true,
-              message: 'File downloaded and stored successfully'
-            });
-          } catch (error) {
-            resolve({
-              file: null,
-              success: false,
-              message: error instanceof Error ? `Error storing file: ${error.message}` : 'Unknown error storing file'
-            });
-          }
-        })
-        .catch(error => {
-          resolve({
-            file: null,
-            success: false,
-            message: error instanceof Error ? error.message : 'Unknown error'
-          });
-        });
-    });
   };
   
   // Helper function for downloading smaller files
@@ -733,81 +782,6 @@ const FileStorage = (() => {
       xhr.onabort = () => reject(new Error('Download was aborted'));
       
       xhr.send();
-    });
-  };
-  
-  // Helper function for downloading large files in chunks
-  const downloadInChunks = (
-    url: string,
-    fileName: string,
-    contentType: string,
-    totalSize: number,
-    progressCallback?: (progress: number, text?: string) => void
-  ): Promise<File> => {
-    return new Promise((resolve, reject) => {
-      const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
-      const chunks: Blob[] = [];
-      let loaded = 0;
-      
-      // Function to download a chunk
-      const downloadChunk = (start: number, end: number): Promise<void> => {
-        return new Promise((resolveChunk, rejectChunk) => {
-          const range = `bytes=${start}-${end-1}`;
-          
-          fetch(url, {
-            headers: { Range: range }
-          })
-          .then(response => {
-            if (response.status === 206) { // Partial content
-              return response.blob();
-            } else if (response.status === 200) {
-              // Server doesn't support range requests, but we'll still process the chunk
-              return response.blob();
-            } else {
-              throw new Error(`Server returned status ${response.status}`);
-            }
-          })
-          .then(blob => {
-            chunks.push(blob);
-            loaded += blob.size;
-            
-            // Update progress
-            const percentComplete = Math.round((loaded / totalSize) * 100);
-            progressCallback?.(
-              percentComplete,
-              `Downloaded ${formatFileSize(loaded)} of ${formatFileSize(totalSize)} (${percentComplete}%)`
-            );
-            
-            resolveChunk();
-          })
-          .catch(rejectChunk);
-        });
-      };
-      
-      // Sequentially download all chunks to avoid overwhelming the device
-      const downloadAllChunks = async () => {
-        let start = 0;
-        
-        while (start < totalSize) {
-          const end = Math.min(start + CHUNK_SIZE, totalSize);
-          try {
-            await downloadChunk(start, end);
-            start = end;
-          } catch (error) {
-            reject(error);
-            return;
-          }
-        }
-        
-        // Combine all chunks and create a File
-        progressCallback?.(100, "Processing downloaded file...");
-        const combinedBlob = new Blob(chunks, { type: contentType });
-        const file = new File([combinedBlob], fileName, { type: contentType });
-        resolve(file);
-      };
-      
-      // Start the chunked download process
-      downloadAllChunks();
     });
   };
   
@@ -1040,6 +1014,105 @@ const FileStorage = (() => {
     })
   }
 
+  // Sequential download of multiple files
+  const downloadFilesSequentially = async (
+    urls: string[],
+    folderId: string,
+    progressCallback?: (
+      overallProgress: number, 
+      currentFileProgress: number, 
+      currentFileIndex: number,
+      totalFiles: number,
+      statusText: string
+    ) => void
+  ): Promise<BatchDownloadResult> => {
+    if (!db) {
+      return {
+        successfulFiles: [],
+        failedUrls: urls.map(url => ({url, error: "Database not initialized"})),
+        overallSuccess: false
+      };
+    }
+
+    const result: BatchDownloadResult = {
+      successfulFiles: [],
+      failedUrls: [],
+      overallSuccess: false
+    };
+
+    const totalFiles = urls.length;
+    let completedFiles = 0;
+
+    // Process each URL sequentially
+    for (let i = 0; i < urls.length; i++) {
+      const url = urls[i];
+      const fileName = getFileNameFromUrl(url);
+      
+      try {
+        // Update progress with overall status and current file
+        progressCallback?.(
+          Math.round((completedFiles / totalFiles) * 100),
+          0,
+          i + 1,
+          totalFiles,
+          `Starting download for ${fileName} (${i + 1}/${totalFiles})`
+        );
+
+        // Download the current file with a wrapper for progress reporting
+        const fileResult = await downloadFileFromUrl(
+          url,
+          folderId,
+          (currentProgress, currentText) => {
+            // Calculate overall progress: completed files + progress on current file
+            const overallProgress = Math.round(
+              ((completedFiles + (currentProgress / 100)) / totalFiles) * 100
+            );
+            
+            progressCallback?.(
+              overallProgress,
+              currentProgress,
+              i + 1,
+              totalFiles,
+              currentText || `Downloading ${fileName} (${i + 1}/${totalFiles}): ${currentProgress}%`
+            );
+          }
+        );
+
+        if (fileResult.success && fileResult.file) {
+          result.successfulFiles.push(fileResult.file);
+        } else {
+          result.failedUrls.push({
+            url,
+            error: fileResult.message || "Unknown error"
+          });
+        }
+      } catch (error) {
+        console.error(`Error downloading ${url}:`, error);
+        result.failedUrls.push({
+          url,
+          error: error instanceof Error ? error.message : "Unknown error"
+        });
+      }
+      
+      // Mark this file as completed regardless of success/failure
+      completedFiles++;
+      
+      // Update with completion of current file
+      progressCallback?.(
+        Math.round((completedFiles / totalFiles) * 100),
+        100,
+        i + 1,
+        totalFiles,
+        `Completed ${i + 1}/${totalFiles} files`
+      );
+    }
+
+    // Set overall success if we downloaded at least one file
+    result.overallSuccess = result.successfulFiles.length > 0;
+    
+    return result;
+  };
+
   // Return public methods
   return {
     init,
@@ -1066,6 +1139,7 @@ const FileStorage = (() => {
     extractZipFile,
     // URL download
     downloadFileFromUrl,
+    downloadFilesSequentially,
     // Last opened comic operations
     setLastOpenedComic,
     getLastOpenedComic,
