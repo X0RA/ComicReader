@@ -9,7 +9,12 @@ import { Progress } from "@/components/ui/progress" // Assuming you have a Progr
 import ComicOverlay from "./_comicOverlay"
 import ComicView from "./_comicView"
 
-export default function ReadFilePage({ params }: { params: { id: string } }) {
+
+export default function ReadFilePage({
+    params,
+  }: {
+    params: Promise<{ id: string }>
+  }) {
     const router = useRouter();
     // @ts-ignore
     const { id } = React.use(params);
@@ -26,12 +31,6 @@ export default function ReadFilePage({ params }: { params: { id: string } }) {
     const [nextComic, setNextComic] = useState<string | null>(null);
     const [previousComic, setPreviousComic] = useState<string | null>(null);
     const [initialPage, setInitialPage] = useState<number | null>(null);
-
-    useEffect(() => {
-      console.log('currentPage', currentPage)
-      console.log('initialPage', initialPage)
-    }, [currentPage, initialPage])
-
 
     // Find the comic in the database and load it
     useEffect(() => {

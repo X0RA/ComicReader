@@ -41,11 +41,6 @@ export default function Home() {
   }, []);
 
 
-  // TESTING
-  useEffect(() => {
-    console.log(comicsData)
-  }, [comicsData])
-
   return (
     <div>
       {isLoading ? (
