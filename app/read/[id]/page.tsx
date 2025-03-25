@@ -31,6 +31,9 @@ export default function ReadFilePage({
     const [nextComic, setNextComic] = useState<string | null>(null);
     const [previousComic, setPreviousComic] = useState<string | null>(null);
     const [initialPage, setInitialPage] = useState<number | null>(null);
+    const [lastScrollY, setLastScrollY] = useState<number>(0);
+    const [scrollDirection, setScrollDirection] = useState<'up' | 'down' | null>(null);
+    const scrollThreshold = 30; // Minimum scroll amount to trigger the overlay
 
     // Find the comic in the database and load it
     useEffect(() => {
@@ -320,6 +323,32 @@ export default function ReadFilePage({
     const toggleOverlay = () => {
         setShowOverlay(prev => !prev);
     };
+
+    // Add scroll listener to detect direction
+    useEffect(() => {
+        const handleScroll = () => {
+            const currentScrollY = window.scrollY;
+            
+            if (currentScrollY < lastScrollY - scrollThreshold) {
+                // Scrolling up
+                setScrollDirection('up');
+                if (!showOverlay) {
+                    setShowOverlay(true);
+                }
+            } else if (currentScrollY > lastScrollY + scrollThreshold) {
+                // Scrolling down
+                setScrollDirection('down');
+            }
+            
+            setLastScrollY(currentScrollY);
+        };
+
+        window.addEventListener('scroll', handleScroll, { passive: true });
+        
+        return () => {
+            window.removeEventListener('scroll', handleScroll);
+        };
+    }, [lastScrollY, showOverlay]);
 
     if (loading) {
         return (
