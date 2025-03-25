@@ -33,7 +33,7 @@ export default function ReadFilePage({
     const [initialPage, setInitialPage] = useState<number | null>(null);
     const [lastScrollY, setLastScrollY] = useState<number>(0);
     const [scrollDirection, setScrollDirection] = useState<'up' | 'down' | null>(null);
-    const scrollThreshold = 30; // Minimum scroll amount to trigger the overlay
+    const scrollThreshold = 5; // Minimum scroll amount to trigger the overlay
 
     // Find the comic in the database and load it
     useEffect(() => {
