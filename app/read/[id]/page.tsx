@@ -338,6 +338,9 @@ export default function ReadFilePage({
             } else if (currentScrollY > lastScrollY + scrollThreshold) {
                 // Scrolling down
                 setScrollDirection('down');
+                if (showOverlay) {
+                    setShowOverlay(false);
+                }
             }
             
             setLastScrollY(currentScrollY);
