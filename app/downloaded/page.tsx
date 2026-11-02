@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTheme } from 'next-themes';
 import { BookOpen, ChevronRight, Trash2 } from 'lucide-react';
-import { db } from '@/lib/dexieDB';
+import { getDownloadedComics, deleteDownloadedComic, clearDownloads, hardReset, storageInfo } from '@/lib/downloads';
+import { maintainArchives } from '@/lib/archiveMaintenance';
 import { ThemeSwitcher } from '@/components/theme-controls';
 import Link from 'next/link';
 
@@ -18,23 +19,23 @@ export default function DownloadedPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  const [storage, setStorage] = useState<Awaited<ReturnType<typeof storageInfo>> | null>(null);
   const [busy, setBusy] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
   const { setTheme } = useTheme();
 
   async function load() {
-    const downloads = await db.getDownloadedComics();
-    const rows = await Promise.all(downloads.map(async (entry) => ({
-      id: entry.id,
-      name: entry.id.split('/').pop() || entry.id,
-      totalSize: entry.fileSize || (await db.getDownloadedComic(entry.id))?.size || 0,
-      downloadedAt: entry.downloadedAt,
-    })));
-    setComics(rows.reverse());
+    const downloads = await getDownloadedComics();
+    setComics(downloads.map(entry => ({
+      id: entry.id, name: entry.name || entry.id, totalSize: entry.fileSize || 0,
+      downloadedAt: entry.lastAccessedAt || entry.downloadedAt,
+    })).sort((a, b) => (b.downloadedAt ?? 0) - (a.downloadedAt ?? 0)));
+    setStorage(await storageInfo());
   }
 
   useEffect(() => {
+    void maintainArchives().then(load).catch(err => setError(`Archive maintenance failed: ${String(err)}`));
     load().catch(err => setError(`Failed to load downloads: ${String(err)}`)).finally(() => setLoading(false));
   }, []);
 
@@ -53,14 +54,13 @@ export default function DownloadedPage() {
     setError(null);
     try {
       if (confirmation.kind === 'delete') {
-        await db.deleteDownloadedComic(confirmation.comic.id);
+        await deleteDownloadedComic(confirmation.comic.id);
       } else if (confirmation.kind === 'clear') {
         // Remove blobs and all download metadata, preserving catalog and progress.
-        await db.comicDownloads.clear();
+        await clearDownloads();
       } else {
-        // Dexie's singleton owns only ComicsDatabase. Never enumerate origin databases.
-        await db.delete();
-        await db.open();
+        // Use the storage manager to cancel transfers and remove OPFS archives safely.
+        await hardReset(false);
         localStorage.removeItem('comic-reader-view-options');
         setTheme('light');
         localStorage.removeItem('theme');
@@ -93,11 +93,20 @@ export default function DownloadedPage() {
             <button type="button" className={danger} disabled={loading || busy || !comics.length} onClick={() => setConfirmation({ kind: 'clear' })}>Clear all</button>
           </div>
         </div>
+        {storage && <div className="mb-5 space-y-2 rounded-xl border bg-card p-4 text-xs leading-relaxed text-muted-foreground">
+          <p>Browser storage: {size(storage.usage ?? 0)} used · Comic cache budget: {size(storage.budget)}.</p>
+          <p>Older cached comics are removed when space is needed. Reading progress is kept.</p>
+          <button type="button" className="min-h-11 text-primary underline underline-offset-4" onClick={async () => {
+            try { await navigator.storage.persist(); setStorage(await storageInfo()); }
+            catch (err) { setError(String(err)); }
+          }}>{storage.persistent ? 'Persistent storage enabled' : 'Request persistent storage'}</button>
+          <p>Clearing site data removes comics and reading progress. Cached comics alone do not guarantee the app opens offline.</p>
+        </div>}
         {error && !confirmation && <p role="alert" className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">{error}</p>}
         {!loading && comics.length === 0 && <div className="border-t py-12 text-center text-muted-foreground"><p>No comics downloaded yet.</p><Link href="/" className="mt-3 inline-flex min-h-11 items-center text-primary hover:underline">Browse library</Link></div>}
         <ul className="border-t" aria-label="Downloaded comics" aria-busy={loading}>
           {comics.map(comic => <li key={comic.id} className="flex min-h-[76px] items-center gap-3 border-b py-2 pl-2 sm:gap-5">
-            <div className="min-w-0 flex-1"><p className="truncate font-medium" title={comic.name}>{comic.name.replace(/\.cbz$/i, '')}</p><p className="mt-1 text-xs text-muted-foreground">{comic.downloadedAt ? <>Downloaded <time dateTime={new Date(comic.downloadedAt).toISOString()}>{new Date(comic.downloadedAt).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</time></> : 'Download time unavailable'}</p></div>
+            <div className="min-w-0 flex-1"><p className="truncate font-medium" title={comic.name}>{comic.name.replace(/\.cbz$/i, '')}</p><p className="mt-1 text-xs text-muted-foreground">{comic.downloadedAt ? <>Opened <time dateTime={new Date(comic.downloadedAt).toISOString()}>{new Date(comic.downloadedAt).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</time></> : 'Open time unavailable'}</p></div>
             <span className="shrink-0 font-mono text-xs text-muted-foreground">{size(comic.totalSize)}</span>
             <button type="button" disabled={busy} aria-label={`Delete ${comic.name}`} onClick={() => setConfirmation({ kind: 'delete', comic })} className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 aria-hidden="true" size={18} strokeWidth={1.8} /></button>
           </li>)}

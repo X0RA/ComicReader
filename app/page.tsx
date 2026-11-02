@@ -1,5 +1,6 @@
 'use client'
 import { useCallback, useEffect, useRef, useState } from "react";
+import { maintainArchives } from "@/lib/archiveMaintenance";
 import { db } from "@/lib/dexieDB";
 import { FileManager } from "@/components/file-manager";
 import { LibraryHeader } from "@/components/library-header";
@@ -77,7 +78,9 @@ export default function Home() {
 
   useEffect(() => {
     loadLibrary();
+    const maintenance = setTimeout(() => { void maintainArchives().catch(console.warn); }, 1000);
     return () => {
+      clearTimeout(maintenance);
       currentAttempt.current++;
       clearTimeout(loadTimeout.current);
     };

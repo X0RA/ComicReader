@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { BookOpen, Play } from "lucide-react"
-import { db } from "@/lib/dexieDB"
+import { getComicDownloadStatus, readStored } from "@/lib/downloads"
+import { namedLock, leaseKey } from "@/lib/archiveStore"
 import { parseComicName } from "@/lib/comic-name"
 import { archiveImageNames } from "@/lib/reader-pages"
 
@@ -11,15 +12,19 @@ import { archiveImageNames } from "@/lib/reader-pages"
 const MAX_COVER_ARCHIVE_BYTES = 512 * 1024 * 1024
 
 async function extractCachedCover(comicId: string): Promise<Blob | null> {
-  const archive = await db.getDownloadedComic(comicId)
-  if (!archive || archive.size > MAX_COVER_ARCHIVE_BYTES) return null
+  return namedLock(leaseKey(comicId), async () => {
+    const row = await getComicDownloadStatus(comicId)
+    if (!row || row.status !== "completed") return null
+    const archive = await readStored(row)
+    if (!archive || archive.size > MAX_COVER_ARCHIVE_BYTES) return null
 
-  const { default: JSZip } = await import("jszip")
-  const zip = await JSZip.loadAsync(archive)
-  const fileNames = Object.keys(zip.files).filter((fileName) => !zip.files[fileName].dir)
-  // Same ordering as the reader, so the thumbnail is its first page.
-  const [firstPage] = archiveImageNames(fileNames)
-  return firstPage ? zip.files[firstPage].async("blob") : null
+    const { default: JSZip } = await import("jszip")
+    const zip = await JSZip.loadAsync(archive)
+    const fileNames = Object.keys(zip.files).filter((fileName) => !zip.files[fileName].dir)
+    // Same ordering as the reader, so the thumbnail is its first page.
+    const [firstPage] = archiveImageNames(fileNames)
+    return firstPage ? zip.files[firstPage].async("blob") : null
+  }, "shared")
 }
 
 function useCachedCover(comicId: string) {

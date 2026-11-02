@@ -2,8 +2,8 @@ import { BookOpen } from "lucide-react";
 import styles from "./reader.module.css";
 
 export default function ReaderLoading({ phase, progress }: { phase: string; progress: number }) {
-  // Downloads currently report 1% until complete; keep that phase indeterminate.
-  const determinate = phase === "Preparing pages…" && progress > 0;
+  // The storage manager reports bytes when Content-Length is available.
+  const determinate = progress > 0;
   const value = Math.min(100, Math.max(0, Math.round(progress)));
   return <section aria-label="Opening comic" className="flex w-full max-w-xs flex-col items-center text-center">
     <div aria-hidden="true" className="relative mb-7 flex size-20 items-center justify-center rounded-2xl border border-primary/20 bg-primary/5 text-primary">
