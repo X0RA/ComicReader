@@ -20,6 +20,12 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Validation
+
+Run `npm run build` to compile the app and check TypeScript. The legacy
+`npm run lint` command was removed because Next.js 16 no longer provides
+`next lint`; the current Next.js ESLint integration does not support TypeScript 7.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
