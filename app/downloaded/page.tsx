@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { db } from '@/lib/dexieDB';
+import { getDownloadedComics, deleteDownloadedComic, clearDownloads, hardReset, storageInfo } from '@/lib/downloads';
+import { maintainArchives } from '@/lib/archiveMaintenance';
 import Link from 'next/link';
 
 interface CachedComic {
@@ -19,9 +20,11 @@ export default function DownloadedPage() {
   const [clearAllConfirm, setClearAllConfirm] = useState(false);
   const [hardResetConfirm, setHardResetConfirm] = useState(false);
 
+  const [storage, setStorage] = useState<Awaited<ReturnType<typeof storageInfo>> | null>(null);
   // Load cached comics on component mount
   useEffect(() => {
-    loadCachedComics();
+    void loadCachedComics();
+    void maintainArchives().then(loadCachedComics).catch(err => setError(String(err)));
   }, []);
 
   async function loadCachedComics() {
@@ -30,20 +33,21 @@ export default function DownloadedPage() {
       setError(null);
       
       // Get comics from Dexie DB
-      const downloads = await db.getDownloadedComics();
+      const downloads = await getDownloadedComics();
       
       // Transform to the expected format
       const comicsList: CachedComic[] = downloads.map(download => ({
         id: download.id,
-        name: download.id.split('/').pop() || download.id, // Extract filename from ID
+        name: download.name || download.id, // Extract filename from ID
         totalSize: download.fileSize || 0,
-        accessTime: download.downloadedAt || Date.now()
+        accessTime: download.lastAccessedAt || download.downloadedAt || 0
       }));
       
       // Sort by most recently accessed
       comicsList.sort((a, b) => b.accessTime - a.accessTime);
       
       setComics(comicsList);
+      setStorage(await storageInfo());
     } catch (err) {
       setError(`Failed to load cached comics: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -53,7 +57,7 @@ export default function DownloadedPage() {
 
   async function deleteComic(id: string) {
     try {
-      await db.deleteDownloadedComic(id);
+      await deleteDownloadedComic(id);
       
       // Refresh the comics list
       await loadCachedComics();
@@ -65,12 +69,8 @@ export default function DownloadedPage() {
 
   async function clearAllComics() {
     try {
-      // Delete all downloaded comics
-      const downloads = await db.getDownloadedComics();
-      for (const download of downloads) {
-        await db.deleteDownloadedComic(download.id);
-      }
-      
+      await clearDownloads();
+      setStorage(await storageInfo());
       // Refresh the comics list
       setComics([]);
       setClearAllConfirm(false);
@@ -80,23 +80,9 @@ export default function DownloadedPage() {
   }
 
   async function hardResetIndexedDB() {
+    setHardResetConfirm(false);
     try {
-      if ('databases' in indexedDB) {
-        await indexedDB.databases().then((dbs) => {
-          dbs.forEach((db) => {
-            if (db.name) { // Ensure the database has a name
-              indexedDB.deleteDatabase(db.name);
-            }
-          });
-        });
-        // After deletion, clear the comics list
-        setComics([]);
-        setHardResetConfirm(false);
-      } else {
-        // Fallback: if indexedDB.databases() isn't available
-        console.warn('indexedDB.databases() is not supported in this browser.');
-        setError('IndexedDB hard reset not supported in this browser.');
-      }
+      await hardReset();
     } catch (err) {
       setError(`Failed to reset IndexedDB: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -115,6 +101,15 @@ export default function DownloadedPage() {
     <div className="container mx-auto px-4 py-8">
       <h1 className="text-3xl font-bold mb-6">Downloaded Comics</h1>
       
+      {storage && <div className="mb-6 space-y-2">
+        <p>Browser storage: {formatSize(storage.usage ?? 0)} used. Comic cache budget: {formatSize(storage.budget)}.</p>
+        <p>Older cached comics are removed when space is needed. Reading progress is kept.</p>
+        <button className="underline" onClick={async () => {
+          try { await navigator.storage.persist(); setStorage(await storageInfo()); }
+          catch (err) { setError(String(err)); }
+        }}>{storage.persistent ? 'Persistent storage enabled' : 'Request persistent storage'}</button>
+        <p className="text-sm">Clearing site data still removes comics and reading progress. Cached comics alone do not guarantee the app opens offline.</p>
+      </div>}
       {error && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
           {error}
@@ -228,8 +223,8 @@ export default function DownloadedPage() {
           {hardResetConfirm && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
               <div className="bg-white rounded-lg p-6 max-w-md w-full">
-                <h2 className="text-xl font-bold mb-4">Hard Reset IndexedDB</h2>
-                <p className="mb-6">Are you sure you want to delete all IndexedDB databases? This is a destructive action that cannot be undone and may affect other parts of the application.</p>
+                <h2 className="text-xl font-bold mb-4">Reset Comic Reader storage</h2>
+                <p className="mb-6">Delete all cached comics, the catalogue, and reading progress for this app? This cannot be undone.</p>
                 <div className="flex justify-end space-x-2">
                   <button 
                     className="bg-gray-300 hover:bg-gray-400 text-black font-bold py-2 px-4 rounded"

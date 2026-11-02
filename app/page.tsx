@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState } from "react";
+import { maintainArchives } from "@/lib/archiveMaintenance";
 import { db } from "@/lib/dexieDB";
 import { FileManager } from "@/components/file-manager";
 import { Loader2 } from "lucide-react";
@@ -11,6 +12,7 @@ export default function Home() {
   const [lastFolderId, setLastFolderId] = useState<string>("0"); // Default to "0" if no last folder
 
   useEffect(() => {
+    const maintenance = setTimeout(() => { void maintainArchives().catch(console.warn); }, 1000);
     // Load the last folder ID
     db.getLastFolder().then((id) => {
       if (id) {
@@ -38,6 +40,7 @@ export default function Home() {
       console.error("Failed to load data:", error);
       setIsLoading(false);
     });
+    return () => clearTimeout(maintenance);
   }, []);
 
 

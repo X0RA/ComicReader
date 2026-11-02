@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button"
 import { ArrowLeft, ChevronLeft, ChevronRight, Home } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { db } from "@/lib/dexieDB"
+import { withArchive, getComicDownloadStatus, preloadComic } from "@/lib/downloads"
+import { maintainArchives } from "@/lib/archiveMaintenance"
 import JSZip from "jszip"
 import { Progress } from "@/components/ui/progress" // Assuming you have a Progress component from shadcn/ui
 import ComicOverlay from "./_comicOverlay"
@@ -37,10 +39,18 @@ export default function ReadFilePage({
 
     // Find the comic in the database and load it
     useEffect(() => {
+        let cancelled = false;
+        const readerController = new AbortController();
+        const urls: string[] = [];
+        let tracker: ReturnType<typeof setInterval> | undefined;
+        setLoading(true); setError(null); setImages([]); setCurrentPage(null); setInitialPage(null);
+        setNextComic(null); setPreviousComic(null);
+        void maintainArchives().catch(console.warn);
         async function loadComic() {
             try {
                 // First, find the comic URL in the database
                 const comicsData = await db.getComicsData()
+                if (cancelled) return;
                 if (!comicsData) {
                     setError("Comics data not available")
                     setLoading(false)
@@ -69,6 +79,7 @@ export default function ReadFilePage({
                     return
                 }
 
+                if (cancelled) return;
                 setComicName(comic.name)
 
 
@@ -111,54 +122,24 @@ export default function ReadFilePage({
                 // Save as last read comic
                 await db.setLastReadComic(id)
 
-                // Check if the comic is already downloaded
-                let comicBlob = await db.getDownloadedComic(id)
-
-                // If not downloaded, download it
-                if (!comicBlob) {
-                    setDownloadStatus({ isDownloading: true, progress: 0 })
-
-                    try {
-                        // Download the comic and track progress
-                        const downloadTracker = setInterval(async () => {
-                            const status = await db.getComicDownloadStatus(id)
-                            if (status) {
-                                setDownloadStatus({
-                                    isDownloading: status.status === 'in_progress',
-                                    progress: status.progress
-                                })
-                            }
-                        }, 300)
-
-                        // Start download
-                        await db.downloadComic({ id, url: comic.link })
-                        clearInterval(downloadTracker)
-
-                        // Get the downloaded blob
-                        comicBlob = await db.getDownloadedComic(id)
-                        if (!comicBlob) {
-                            throw new Error("Download completed but comic not found")
-                        }
-                    } catch (err) {
-                        console.error("Error downloading comic:", err)
-                        setError("Failed to download comic")
-                        setLoading(false)
-                        return
-                    }
-                }
-
-                // Process the comic archive
+                tracker = setInterval(() => {
+                    void getComicDownloadStatus(id).then(status => {
+                        if (!cancelled && status) setDownloadStatus({ isDownloading: status.status === 'in_progress', progress: status.progress });
+                    }).catch(console.warn);
+                }, 500);
                 try {
-                    // Unzip the comic file
+                  await withArchive({ id, url: comic.link, name: comic.name }, async comicBlob => {
+                    if (cancelled) return;
                     const zipFile = await JSZip.loadAsync(comicBlob)
                     const imageFiles: string[] = []
                     const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
 
                     // Get all files and sort them to ensure correct page order
-                    const fileNames = Object.keys(zipFile.files).sort()
+                    const fileNames = Object.keys(zipFile.files).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
 
                     // Process each file in the zip
                     for (const fileName of fileNames) {
+                        if (cancelled) return;
                         // Skip directories and hidden files
                         if (zipFile.files[fileName].dir ||
                             fileName.startsWith('__MACOSX') ||
@@ -176,23 +157,14 @@ export default function ReadFilePage({
                                 // Get the blob for this file
                                 const content = await zipFile.files[fileName].async('blob')
                                 // Create a URL for the blob
+                                if (cancelled) return;
                                 const objectURL = URL.createObjectURL(content)
+                                urls.push(objectURL)
                                 imageFiles.push(objectURL)
                             } catch (error) {
                                 console.error(`Error extracting file ${fileName}:`, error)
                             }
                         }
-                    }
-
-                    // Free up memory - remove reference to the original blob
-                    comicBlob = null
-
-                    // Explicitly tell JSZip to release any internal references (if possible)
-                    // This helps the garbage collector identify it as available for collection
-                    for (const key in zipFile.files) {
-                        // @ts-ignore
-                        // Attempt to release the file but does give a type error
-                        zipFile.files[key] = null
                     }
 
                     if (imageFiles.length === 0) {
@@ -202,36 +174,39 @@ export default function ReadFilePage({
                     }
 
                     // Preload next comic if possible
-                    preloadNextComic()
+                    if (!cancelled) preloadNextComic()
+                  }, readerController.signal);
                 } catch (err) {
                     console.error("Error processing comic archive:", err)
-                    setError("Failed to process comic file")
+                    if (!cancelled) setError(err instanceof Error ? err.message : "Failed to process comic file")
                 }
 
-                setLoading(false)
+                if (!cancelled) setLoading(false)
             } catch (err) {
                 console.error("Error loading comic:", err)
-                setError("Failed to load comic")
-                setLoading(false)
-            }
+                if (!cancelled) { setError("Failed to load comic"); setLoading(false); }
+            } finally { clearInterval(tracker); }
         }
 
         async function loadComicStatus() {
             const comicStatus = await db.getComicStatus(id)
-            if (comicStatus && comicStatus.lastPage) {
+            if (!cancelled && comicStatus && comicStatus.lastPage) {
                 setCurrentPage(comicStatus.lastPage)
                 setInitialPage(comicStatus.lastPage)
             }
         }
 
-        loadComicStatus().then(() => {
-            loadComic()
+        loadComicStatus().catch(console.warn).then(() => {
+            if (!cancelled) void loadComic()
         })
 
         // Cleanup function to release object URLs when component unmounts
         return () => {
             // Clean up all created object URLs
-            images.forEach(url => URL.revokeObjectURL(url))
+            cancelled = true;
+            readerController.abort();
+            clearInterval(tracker);
+            urls.forEach(url => URL.revokeObjectURL(url))
         }
     }, [id])
 
@@ -280,7 +255,7 @@ export default function ReadFilePage({
             if (nextComic) {
                 setNextComic(nextComic.id)
                 // Preload it in the background
-                db.preloadComic({ id: nextComic.id, url: nextComic.link })
+                preloadComic({ id: nextComic.id, url: nextComic.link, name: nextComic.name })
             }
         } catch (error) {
             console.error("Error preloading next comic:", error)
@@ -294,14 +269,13 @@ export default function ReadFilePage({
     };
 
     useEffect(() => {
-        if (currentPage) {
+        if (currentPage && images.length) {
             // if we are on the last page or the page before it log this comic as complete
             if (currentPage === images.length || currentPage === images.length - 1) {
-                db.markComicStatus(id, "completed", currentPage)
+                db.markComicStatus(id, "completed", currentPage, images.length)
             } else {
-                db.markComicStatus(id, "in_progress", currentPage)
+                db.markComicStatus(id, "in_progress", currentPage, images.length)
             }
-            db.setTotalPages(id, images.length)
         }
 
     }, [currentPage, images.length])

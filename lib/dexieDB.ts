@@ -28,7 +28,7 @@ interface ComicsRoot {
 // Define types for downloaded comics
 type ComicDownloadStatus = "in_progress" | "completed" | "failed";
 
-interface ComicDownloadMetadata {
+export interface ComicDownloadMetadata {
   id: string;
   url: string;
   status: ComicDownloadStatus;
@@ -39,7 +39,15 @@ interface ComicDownloadMetadata {
   fileSize?: number; // Size of the file in bytes
 }
 
+export interface DownloadRecord {
+  id: string; url: string; name?: string; previous?: DownloadRecord;
+  status: ComicDownloadStatus; progress: number;
+  backend: "idb" | "opfs"; archiveFile?: string; pendingFile?: string; token?: string;
+  fileSize?: number; receivedBytes?: number; downloadedAt?: number; lastAccessedAt?: number; error?: string;
+}
+
 class ComicsDatabase extends Dexie {
+  downloads!: Table<DownloadRecord>;
   comics!: Table<ComicsRoot>;
   readComics!: Table<ReadComic>;
   lastReadComic!: Table<LastRead>;
@@ -57,12 +65,20 @@ class ComicsDatabase extends Dexie {
       lastFolder: "id",
       comicDownloads: "id, status, downloadedAt", // Store full blob in this table
     });
+    this.version(3).stores({ downloads: "id, status, lastAccessedAt" }).upgrade(async tx => {
+      const records: DownloadRecord[] = [];
+      await tx.table("comicDownloads").each(row => {
+        if (row.status === "completed" && row.data) {
+          const { data, ...metadata } = row;
+          records.push({ ...metadata, backend: "idb", fileSize: data.size, lastAccessedAt: row.downloadedAt });
+        }
+      });
+      await tx.table("downloads").bulkPut(records);
+    });
   }
 
   // Store the entire comics data - fixed type error
   async storeComicsData(data: ContentItem[]): Promise<void> {
-    // Clear existing data first
-    await this.comics.clear();
     // Store new data with a wrapper object
     await this.comics.put({ id: "root", content: data });
   }
@@ -101,12 +117,7 @@ class ComicsDatabase extends Dexie {
   ): Promise<void> {
     await this.readComics.put({ id, status, lastPage, totalPages });
 
-    // Also update in the comics data if it's loaded
-    const root = await this.comics.get("root");
-    if (root) {
-      this.updateStatusForId(root.content, id, status, lastPage, totalPages);
-      await this.comics.put(root);
-    }
+
   }
 
   async setTotalPages(id: string, totalPages: number): Promise<void> {
@@ -124,12 +135,7 @@ class ComicsDatabase extends Dexie {
       });
     }
 
-    // Also update in the comics data if it's loaded (similar to markComicStatus)
-    const root = await this.comics.get("root");
-    if (root) {
-      this.updateStatusForId(root.content, id, comic?.status || "unread", comic?.lastPage || 0, totalPages);
-      await this.comics.put(root);
-    }
+
   }
 
   // Get all read comics
@@ -236,183 +242,6 @@ class ComicsDatabase extends Dexie {
     }
   }
 
-  /**
-   * Downloads a comic in full and stores it in IndexedDB.
-   * Simplified version that downloads the entire file at once.
-   */
-  async downloadComic(comic: {
-    id: string;
-    url: string;
-  }): Promise<ComicDownloadMetadata> {
-    // Check if already downloaded
-    let meta = await this.comicDownloads.get(comic.id);
-    if (meta?.status === "completed" && meta?.data) {
-      return meta;
-    }
-
-    // Initialize metadata
-    meta = {
-      id: comic.id,
-      url: comic.url,
-      status: "in_progress",
-      progress: 0,
-    };
-    await this.comicDownloads.put(meta);
-
-    // Set up AbortController for timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 90000); // 90 second timeout
-
-    try {
-      // Simple fetch request
-      const response = await this.retryFetch(comic.url, {
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`Network response error: ${response.status} ${response.statusText}`);
-      }
-
-      clearTimeout(timeoutId);
-
-      // Get total size for progress reporting
-      const contentLength = Number(response.headers.get("Content-Length") || "0");
-      
-      // Update progress to indicate we've started
-      meta.progress = 1;
-      meta.fileSize = contentLength;
-      await this.comicDownloads.put(meta);
-
-      // Get the entire file as a blob
-      const data = await response.blob();
-
-      // Mark as completed
-      meta.status = "completed";
-      meta.progress = 100;
-      meta.downloadedAt = Date.now();
-      meta.data = data; // Store the entire file
-      await this.comicDownloads.put(meta);
-
-      // Enforce storage limits
-      await this.enforceComicLimit();
-
-      return meta;
-    } catch (error: any) {
-      clearTimeout(timeoutId);
-
-      // Handle abort errors specially
-      if (error.name === "AbortError") {
-        meta.status = "failed";
-        meta.error = "Download timed out";
-      } else {
-        meta.status = "failed";
-        meta.error = error.message || "Download failed";
-      }
-
-      await this.comicDownloads.put(meta);
-      throw error;
-    }
-  }
-
-  /**
-   * Simplified retry mechanism
-   */
-  private async retryFetch(url: string, options: RequestInit = {}, attempts = 3): Promise<Response> {
-    let lastError;
-
-    for (let i = 0; i < attempts; i++) {
-      try {
-        return await fetch(url, options);
-      } catch (err) {
-        lastError = err;
-        // Wait before retry (exponential backoff)
-        if (i < attempts - 1) {
-          await new Promise(resolve => setTimeout(resolve, 1000 * (2 ** i)));
-        }
-      }
-    }
-
-    throw lastError;
-  }
-
-  /**
-   * Preloads a comic in the background.
-   */
-  async preloadComic(comic: { id: string; url: string }): Promise<void> {
-    this.downloadComic(comic).catch((error) => {
-      console.error(`Preload failed for comic ${comic.id}:`, error);
-    });
-  }
-
-  /**
-   * Enforces that no more than 10 comics are stored.
-   * Removes the oldest comics if necessary.
-   */
-  private async enforceComicLimit(): Promise<void> {
-    const completed = await this.comicDownloads
-      .where("status")
-      .equals("completed")
-      .toArray();
-    
-    if (completed.length > 10) {
-      // Sort by downloadedAt ascending (oldest first)
-      completed.sort(
-        (a, b) => (a.downloadedAt || 0) - (b.downloadedAt || 0)
-      );
-      
-      // Delete the oldest comics
-      const toDelete = completed.slice(0, completed.length - 10);
-      for (const record of toDelete) {
-        await this.comicDownloads.delete(record.id);
-      }
-    }
-  }
-
-  /**
-   * Gets a downloaded comic as a Blob.
-   * Returns null if the comic is not found or not completely downloaded.
-   */
-  async getDownloadedComic(comicId: string): Promise<Blob | null> {
-    const meta = await this.comicDownloads.get(comicId);
-    if (!meta || meta.status !== "completed" || !meta.data) {
-      return null;
-    }
-    
-    return meta.data;
-  }
-
-  /**
-   * Gets the download status of a comic.
-   */
-  async getComicDownloadStatus(comicId: string): Promise<ComicDownloadMetadata | null> {
-    const meta = await this.comicDownloads.get(comicId);
-    if (!meta) return null;
-    
-    // Don't include the blob in the status to keep the response size small
-    const { data, ...statusInfo } = meta;
-    return statusInfo;
-  }
-
-  /**
-   * Gets a list of all downloaded comics.
-   */
-  async getDownloadedComics(): Promise<ComicDownloadMetadata[]> {
-    const comics = await this.comicDownloads
-      .where("status")
-      .equals("completed")
-      .sortBy("downloadedAt");
-    
-    // Don't include the blob data in the list
-    return comics.map(({ data, ...info }) => info);
-  }
-
-  /**
-   * Deletes a downloaded comic.
-   */
-  async deleteDownloadedComic(comicId: string): Promise<void> {
-    await this.comicDownloads.delete(comicId);
-  }
-
   // Helper function to update status in the data using a Map for efficiency
   private updateStatusInData(
     data: ContentItem[],
@@ -436,37 +265,6 @@ class ComicsDatabase extends Dexie {
         const folder = item as Folder;
         folder.children.forEach(processItem);
       }
-    };
-
-    data.forEach(processItem);
-  }
-
-  // Helper to update status for a specific ID
-  private updateStatusForId(
-    data: ContentItem[],
-    id: string,
-    status: "in_progress" | "completed" | "unread",
-    lastPage: number,
-    totalPages?: number
-  ): void {
-    const processItem = (item: ContentItem) => {
-      if (item.type === "file" && item.id === id) {
-        const file = item as File;
-        file.readStatus = status;
-        file.lastPage = lastPage;
-        if (totalPages !== undefined) {
-          file.totalPages = totalPages;
-        }
-        return true; // Found and updated
-      } else if (item.type === "folder") {
-        const folder = item as Folder;
-        for (const child of folder.children) {
-          if (processItem(child)) {
-            return true; // Propagate found status up
-          }
-        }
-      }
-      return false; // Not found in this branch
     };
 
     data.forEach(processItem);
