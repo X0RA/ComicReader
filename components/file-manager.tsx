@@ -1,18 +1,19 @@
 "use client"
 
-import React, { useState, useEffect } from "react"
-import { File, Folder, ChevronRight, ArrowUpDown, ArrowDown, ArrowUp, Home } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import React, { useEffect, useMemo, useState } from "react"
+import Link from "next/link"
+import { ArrowDown, ArrowUp, BookOpen, Check, ChevronRight, Folder } from "lucide-react"
 import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
-import { formatFileSize } from "@/lib/utils"
-import { useRouter } from "next/navigation"
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { ContinueCard } from "@/components/continue-card"
+import { LibraryHeader } from "@/components/library-header"
+import { cn, formatFileSize } from "@/lib/utils"
+import { formatFolderTitle, parseComicName } from "@/lib/comic-name"
 import { db } from "@/lib/dexieDB"
 
 
@@ -39,7 +40,7 @@ interface FolderItem {
 type FileSystemItem = FileItem | FolderItem
 
 interface FileManagerProps {
-  data: FileSystemItem | null
+  data: FileSystemItem | FileSystemItem[] | null
   className?: string
   lastFolderId?: string
 }
@@ -47,194 +48,300 @@ interface FileManagerProps {
 type SortKey = "name" | "size" | "type"
 type SortDirection = "asc" | "desc"
 
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: "name", label: "Name" },
+  { key: "size", label: "Size" },
+  { key: "type", label: "Type" },
+]
+
 // Helper function to check if an item is a folder
 const isFolder = (item: FileSystemItem): item is FolderItem => {
   return item.type === "folder"
 }
 
-// Helper function to find a folder by ID in a nested structure
-const findFolderById = (items: FileSystemItem | FileSystemItem[] | null, id: string): FolderItem | null => {
-  if (!items) return null
-  
-  const itemArray = Array.isArray(items) ? items : [items]
-  
-  for (const item of itemArray) {
-    if (item.id === id && isFolder(item)) {
-      return item
-    }
-    
-    if (isFolder(item)) {
-      const found = findFolderById(item.children, id)
-      if (found) return found
-    }
-  }
-  
-  return null
+// Wraps the catalog in a single root folder; the remote catalog arrives as a bare list of items
+const toRootFolder = (data: FileSystemItem | FileSystemItem[]): FolderItem => {
+  if (!Array.isArray(data) && isFolder(data)) return data
+  return { id: "0", name: "Root", type: "folder", children: Array.isArray(data) ? data : [data] }
 }
 
 // Helper function to build path to a folder
-const buildPathToFolder = (
-  items: FileSystemItem | FileSystemItem[] | null, 
-  folderId: string, 
-  currentPath: FolderItem[] = []
-): FolderItem[] | null => {
-  if (!items) return null
-  
-  const itemArray = Array.isArray(items) ? items : [items]
-  
-  for (const item of itemArray) {
-    if (item.id === folderId && isFolder(item)) {
-      return [...currentPath, item]
-    }
-    
-    if (isFolder(item)) {
-      const path = buildPathToFolder(item.children, folderId, [...currentPath, item])
-      if (path) return path
+const buildPathToFolder = (folder: FolderItem, folderId: string): FolderItem[] | null => {
+  if (folder.id === folderId) return [folder]
+
+  for (const child of folder.children) {
+    if (isFolder(child)) {
+      const path = buildPathToFolder(child, folderId)
+      if (path) return [folder, ...path]
     }
   }
-  
+
   return null
 }
 
+// Helper function to find a file and the folders that contain it
+const findFileWithAncestors = (
+  folder: FolderItem,
+  fileId: string
+): { file: FileItem; ancestorIds: string[] } | null => {
+  for (const child of folder.children) {
+    if (isFolder(child)) {
+      const found = findFileWithAncestors(child, fileId)
+      if (found) return { file: found.file, ancestorIds: [child.id, ...found.ancestorIds] }
+    } else if (child.id === fileId) {
+      return { file: child, ancestorIds: [] }
+    }
+  }
+
+  return null
+}
+
+// Totals every file below a folder, including nested folders
+const getFolderTotals = (folder: FolderItem): { files: number; size: number } => {
+  return folder.children.reduce(
+    (totals, child) => {
+      if (isFolder(child)) {
+        const nested = getFolderTotals(child)
+        return { files: totals.files + nested.files, size: totals.size + nested.size }
+      }
+      return { files: totals.files + 1, size: totals.size + (child.size || 0) }
+    },
+    { files: 0, size: 0 }
+  )
+}
+
+const pluralize = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`
+
+const compareNames = (a: FileSystemItem, b: FileSystemItem) =>
+  a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })
+
+// Sorts folders first, then files. Folders have no type, so they stay in name order for that key.
+const sortItems = (items: FileSystemItem[], sortKey: SortKey, sortDirection: SortDirection) => {
+  const direction = sortDirection === "asc" ? 1 : -1
+  const folderSizes = new Map(
+    items.filter(isFolder).map((folder) => [folder.id, getFolderTotals(folder).size])
+  )
+
+  const compare = (a: FileSystemItem, b: FileSystemItem) => {
+    if (isFolder(a) !== isFolder(b)) return isFolder(a) ? -1 : 1
+
+    if (sortKey === "size") {
+      const sizeA = isFolder(a) ? folderSizes.get(a.id) || 0 : a.size || 0
+      const sizeB = isFolder(b) ? folderSizes.get(b.id) || 0 : b.size || 0
+      if (sizeA !== sizeB) return (sizeA - sizeB) * direction
+    } else if (sortKey === "type" && !isFolder(a) && !isFolder(b)) {
+      const byType = (a.extension || "").localeCompare(b.extension || "")
+      if (byType !== 0) return byType * direction
+    }
+    return compareNames(a, b) * direction
+  }
+
+  return [...items].sort(compare)
+}
+
+function SortArrow({ direction }: { direction: SortDirection }) {
+  const Icon = direction === "asc" ? ArrowUp : ArrowDown
+  return <Icon aria-hidden="true" className="size-3" strokeWidth={2.2} />
+}
+
+interface SortControlProps {
+  sortKey: SortKey
+  sortDirection: SortDirection
+  onSort: (key: SortKey) => void
+}
+
+function SortControl({ sortKey, sortDirection, onSort }: SortControlProps) {
+  const directionLabel = sortDirection === "asc" ? "ascending" : "descending"
+  const activeLabel = SORT_OPTIONS.find((option) => option.key === sortKey)?.label
+
+  return (
+    <>
+      {/* Tablet and desktop: segmented control */}
+      <div role="group" aria-label="Sort" className="hidden rounded-[10px] border bg-card p-[3px] sm:flex">
+        {SORT_OPTIONS.map(({ key, label }) => {
+          const isActive = key === sortKey
+          return (
+            <button
+              key={key}
+              type="button"
+              aria-pressed={isActive}
+              aria-label={isActive ? `Sort by ${label}, ${directionLabel}` : `Sort by ${label}`}
+              onClick={() => onSort(key)}
+              className={cn(
+                "flex min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-[7px] px-3 text-[13px] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
+                isActive ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {label}
+              {isActive && <SortArrow direction={sortDirection} />}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Phone: compact menu. Choosing the active option again reverses it, like the segmented control. */}
+      <div className="sm:hidden">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            aria-label={`Sort by ${activeLabel}, ${directionLabel}. Change sort`}
+            className="flex min-h-11 items-center gap-1.5 rounded-[9px] border bg-card px-3 text-[13px] text-card-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          >
+            {activeLabel}
+            <SortArrow direction={sortDirection} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuRadioGroup value={sortKey} onValueChange={(value) => onSort(value as SortKey)}>
+              {SORT_OPTIONS.map(({ key, label }) => (
+                <DropdownMenuRadioItem key={key} value={key} className="min-h-11 gap-3">
+                  {label}
+                  {key === sortKey && <SortArrow direction={sortDirection} />}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </>
+  )
+}
+
+function ReadStateIndicator({ file }: { file: FileItem }) {
+  if (file.readStatus === "completed") {
+    return (
+      <span role="img" aria-label="Read" title="Read" className="flex w-4 shrink-0 justify-center text-muted-foreground">
+        <Check aria-hidden="true" className="size-4" strokeWidth={2} />
+      </span>
+    )
+  }
+  if (file.readStatus === "in_progress") {
+    return (
+      <span role="img" aria-label="In progress" title="In progress" className="flex w-4 shrink-0 justify-center text-primary">
+        <BookOpen aria-hidden="true" className="size-4" strokeWidth={1.8} />
+      </span>
+    )
+  }
+  return (
+    <span className="flex w-4 shrink-0 justify-center">
+      <span role="img" aria-label="Unread" title="Unread" className="size-2 rounded-full bg-primary" />
+    </span>
+  )
+}
+
+function FileRow({ file, onOpen }: { file: FileItem; onOpen: (file: FileItem) => void }) {
+  const { title, number, metadata } = parseComicName(file.name, file.extension)
+  const showPages = file.readStatus === "in_progress" && !!file.lastPage
+
+  return (
+    <Link
+      href={`/read/${file.id}`}
+      prefetch={false}
+      title={file.name}
+      onClick={() => onOpen(file)}
+      className="flex min-h-16 items-center gap-3 px-1 py-2 outline-none transition-colors hover:bg-accent/50 focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50 sm:gap-5 sm:px-3"
+    >
+      <span className="min-w-7 shrink-0 font-mono text-sm text-muted-foreground">{number}</span>
+      <span className="flex min-w-0 flex-auto flex-col gap-[3px]">
+        <span className="truncate text-[15px] font-medium sm:text-base">{title}</span>
+        <span className="truncate text-[13px] text-muted-foreground">
+          {showPages && (
+            <span className="font-mono text-foreground">
+              <span className="sr-only">Page {file.lastPage}{file.totalPages ? ` of ${file.totalPages}` : ""}</span>
+              <span aria-hidden="true">{file.lastPage}{file.totalPages ? ` / ${file.totalPages}` : ""}</span>
+              {metadata && " · "}
+            </span>
+          )}
+          {metadata}
+        </span>
+      </span>
+      <span className="font-mono text-xs whitespace-nowrap text-muted-foreground sm:text-[13px]">
+        {file.size ? formatFileSize(file.size) : "—"}
+      </span>
+      <ReadStateIndicator file={file} />
+    </Link>
+  )
+}
+
+function FolderRow({
+  folder,
+  holdsLastRead,
+  onOpen,
+}: {
+  folder: FolderItem
+  holdsLastRead: boolean
+  onOpen: (folder: FolderItem) => void
+}) {
+  return (
+    <button
+      type="button"
+      title={folder.name}
+      onClick={() => onOpen(folder)}
+      className="flex min-h-14 w-full items-center gap-3.5 px-1 text-left outline-none transition-colors hover:bg-accent/50 focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50 sm:min-h-[60px] sm:gap-4 sm:px-3"
+    >
+      <Folder
+        aria-hidden="true"
+        className={cn("size-5 shrink-0", holdsLastRead ? "text-primary" : "text-muted-foreground")}
+        strokeWidth={1.7}
+      />
+      <span className="min-w-0 flex-auto truncate text-[15px] font-medium sm:text-base">{folder.name}</span>
+      {holdsLastRead && <span className="sr-only">Contains your last-read comic</span>}
+      <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" strokeWidth={2} />
+    </button>
+  )
+}
+
 export function FileManager({ data, className, lastFolderId = "0" }: FileManagerProps) {
-  const [currentFolder, setCurrentFolder] = useState<FolderItem | null>(null)
-  const [path, setPath] = useState<FolderItem[]>([])
+  const [currentFolderId, setCurrentFolderId] = useState(lastFolderId)
   const [sortKey, setSortKey] = useState<SortKey>("name")
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc")
-  const [lastReadComic, setLastReadComic] = useState<FileItem | null>(null)
-  const router = useRouter()
+  const [lastReadId, setLastReadId] = useState<string | null>(null)
 
-  // Initialize when data becomes available
+  // Restore the remembered folder once it has loaded
   useEffect(() => {
-    if (!data) return
-    
-    const rootData = Array.isArray(data) ? data : data
-
-    // If we have a root folder
-    if (isFolder(rootData)) {
-      const rootFolder = rootData as FolderItem
-      
-      // If lastFolderId is the root ID or "0", just set the root folder
-      if (lastFolderId === rootFolder.id || lastFolderId === "0") {
-        setCurrentFolder(rootFolder)
-        setPath([rootFolder])
-        return
-      }
-      
-      // Try to find the last folder and navigate to it
-      const lastFolder = findFolderById(rootData, lastFolderId)
-      if (lastFolder) {
-        const folderPath = buildPathToFolder(rootData, lastFolderId)
-        if (folderPath) {
-          setCurrentFolder(lastFolder)
-          setPath(folderPath)
-          return
-        }
-      }
-      
-      // Fallback to root if we couldn't find the last folder
-      setCurrentFolder(rootFolder)
-      setPath([rootFolder])
-    }
-    // If we have an array (multiple root items)
-    else if (Array.isArray(rootData)) {
-      // Create a virtual root folder
-      const virtualRoot: FolderItem = {
-        id: "0",
-        name: "Root",
-        type: "folder",
-        children: rootData
-      }
-      
-      // If lastFolderId is "0", just set the virtual root
-      if (lastFolderId === "0") {
-        setCurrentFolder(virtualRoot)
-        setPath([virtualRoot])
-        return
-      }
-      
-      // Try to find the last folder
-      const lastFolder = findFolderById(rootData, lastFolderId)
-      if (lastFolder) {
-        // Build path to the folder
-        const pathToFolder = buildPathToFolder(virtualRoot, lastFolderId)
-        if (pathToFolder) {
-          setCurrentFolder(lastFolder)
-          setPath(pathToFolder)
-          return
-        }
-      }
-      
-      // Fallback to virtual root
-      setCurrentFolder(virtualRoot)
-      setPath([virtualRoot])
-    }
-  }, [data, lastFolderId])
+    setCurrentFolderId(lastFolderId)
+  }, [lastFolderId])
 
   // Load last read comic when data is available
   useEffect(() => {
     if (!data) return
-    
-    // Get the last read comic ID
+
     db.getLastReadComic().then(comicId => {
-      if (!comicId) return
-      
-      // Find the comic in our data structure
-      const findComic = (items: FileSystemItem | FileSystemItem[] | null): FileItem | null => {
-        if (!items) return null
-        
-        const itemArray = Array.isArray(items) ? items : [items]
-        
-        for (const item of itemArray) {
-          if (item.id === comicId && item.type === "file") {
-            return item as FileItem
-          }
-          
-          if (isFolder(item)) {
-            const found = findComic(item.children)
-            if (found) return found
-          }
-        }
-        
-        return null
-      }
-      
-      const comic = findComic(data)
-      if (comic) {
-        setLastReadComic(comic)
-      }
+      setLastReadId(comicId ?? null)
     }).catch(error => {
       console.error("Failed to get last read comic:", error)
     })
   }, [data])
 
-  // Function to navigate to a folder
-  const navigateToFolder = (folder: FolderItem) => {
-    setCurrentFolder(folder)
-    
-    // Find the index of the folder in the path
-    const folderIndex = path.findIndex((p) => p.id === folder.id)
-    
-    // If found, slice the path up to that index + 1
-    if (folderIndex >= 0) {
-      setPath(path.slice(0, folderIndex + 1))
-    } else {
-      // If not found (shouldn't happen), just add it to the path
-      setPath([...path, folder])
-    }
-    
-    // Update last folder in DB
-    db.setLastFolder(folder.id)
-  }
+  const root = useMemo(() => (data ? toRootFolder(data) : null), [data])
 
-  // Function to navigate to a specific path index
-  const navigateToPathIndex = (index: number) => {
-    const folder = path[index]
-    setCurrentFolder(folder)
-    setPath(path.slice(0, index + 1))
-    
+  // The path is looked up by ID so a background catalog refresh keeps the open folder.
+  // A remembered folder that no longer exists falls back to the root.
+  const path = useMemo(() => {
+    if (!root) return []
+    return buildPathToFolder(root, currentFolderId) ?? [root]
+  }, [root, currentFolderId])
+  const currentFolder = path[path.length - 1]
+
+  const lastRead = useMemo(
+    () => (root && lastReadId ? findFileWithAncestors(root, lastReadId) : null),
+    [root, lastReadId]
+  )
+
+  const sortedItems = useMemo(
+    () => (currentFolder ? sortItems(currentFolder.children, sortKey, sortDirection) : []),
+    [currentFolder, sortKey, sortDirection]
+  )
+
+  const totals = useMemo(() => (currentFolder ? getFolderTotals(currentFolder) : null), [currentFolder])
+
+  if (!root || !currentFolder || !totals) return null
+
+  // Function to navigate to a folder
+  const navigateToFolder = (folderId: string) => {
+    setCurrentFolderId(folderId)
+    window.scrollTo({ top: 0 })
+
     // Update last folder in DB
-    db.setLastFolder(folder.id)
+    db.setLastFolder(folderId)
   }
 
   const handleFileClick = (file: FileItem) => {
@@ -242,70 +349,10 @@ export function FileManager({ data, className, lastFolderId = "0" }: FileManager
 
     const file_status = file.readStatus? file.readStatus : "in_progress"
     const last_page = file.lastPage? file.lastPage : 0
-    db.markComicStatus(file.id, file_status, last_page)
+    db.markComicStatus(file.id, file_status, last_page, file.totalPages ?? 0)
 
     // Set as last read comic
     db.setLastReadComic(file.id)
-    
-    // Navigate to reader page
-    router.push(`/read/${file.id}`)
-  }
-
-  // Function to navigate to parent folder
-  const navigateToParent = () => {
-    if (path.length > 1) {
-      const parentIndex = path.length - 2
-      const parentFolder = path[parentIndex]
-      setCurrentFolder(parentFolder)
-      setPath(path.slice(0, parentIndex + 1))
-      
-      // Update last folder in DB
-      db.setLastFolder(parentFolder.id)
-    }
-  }
-
-  // Function to handle folder click
-  const handleFolderClick = (folder: FolderItem) => {
-    setCurrentFolder(folder)
-    setPath([...path, folder])
-    
-    // Update last folder in DB
-    db.setLastFolder(folder.id)
-  }
-
-  // Function to sort items
-  const sortItems = (items: (FileItem | FolderItem)[]) => {
-    // First separate folders and files
-    const folders = items.filter((item) => item.type === "folder") as FolderItem[]
-    const files = items.filter((item) => item.type === "file") as FileItem[]
-
-    // Sort folders
-    const sortedFolders = [...folders].sort((a, b) => {
-      if (sortKey === "name") {
-        return sortDirection === "asc" ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name)
-      }
-      // Folders don't have size, so just sort by name for other keys
-      return sortDirection === "asc" ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name)
-    })
-
-    // Sort files
-    const sortedFiles = [...files].sort((a, b) => {
-      if (sortKey === "name") {
-        return sortDirection === "asc" ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name)
-      } else if (sortKey === "size") {
-        const sizeA = a.size || 0
-        const sizeB = b.size || 0
-        return sortDirection === "asc" ? sizeA - sizeB : sizeB - sizeA
-      } else if (sortKey === "type") {
-        const extA = a.extension || ""
-        const extB = b.extension || ""
-        return sortDirection === "asc" ? extA.localeCompare(extB) : extB.localeCompare(extA)
-      }
-      return 0
-    })
-
-    // Return folders first, then files
-    return [...sortedFolders, ...sortedFiles]
   }
 
   // Toggle sort direction or change sort key
@@ -318,151 +365,74 @@ export function FileManager({ data, className, lastFolderId = "0" }: FileManager
     }
   }
 
-  // Get sort icon based on current sort state
-  const getSortIcon = (key: SortKey) => {
-    if (sortKey !== key) return <ArrowUpDown className="h-4 w-4" />
-    return sortDirection === "asc" ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />
-  }
+  const isRoot = path.length === 1
+  const folderCount = currentFolder.children.filter(isFolder).length
+  const directFileCount = currentFolder.children.length - folderCount
+  const rootCounts = [
+    pluralize(folderCount, "folder"),
+    ...(directFileCount > 0 ? [pluralize(directFileCount, "file")] : []),
+  ].join(" · ")
+  const folderSummary = [
+    ...(folderCount > 0 ? [pluralize(folderCount, "folder")] : []),
+    pluralize(totals.files, "file"),
+    formatFileSize(totals.size),
+  ].join(" · ")
 
-  // Early return if no data available
-  if (!data || !currentFolder) {
-    return (
-      <Card className={`w-full ${className}`}>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-xl font-bold">File Manager</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="text-center py-8 text-muted-foreground">Loading files...</div>
-        </CardContent>
-      </Card>
-    )
-  }
+  const sortControl = <SortControl sortKey={sortKey} sortDirection={sortDirection} onSort={handleSort} />
 
   return (
-    <Card className={`w-full ${className}`}>
-      <CardHeader className="pb-3">
-        <div className="flex justify-between items-center w-full">
-          <CardTitle className="text-xl font-bold">Comic Reader</CardTitle>
-          <Button variant="ghost" size="sm" onClick={() => router.push('/downloaded')} className="text-sm bg-red-200">
-            Manage Storage
-          </Button>
-        </div>
-        {/* Breadcrumb navigation */}
-        <Breadcrumb className="mt-2">
-          <BreadcrumbList>
-            {path.map((folder, index) => (
-              <React.Fragment key={folder.id}>
-                <BreadcrumbItem>
-                  {index === 0 ? (
-                    <BreadcrumbLink onClick={() => navigateToPathIndex(0)} className="flex items-center cursor-pointer">
-                      <Home className="h-4 w-4 mr-1" />
-                      {folder.name}
-                    </BreadcrumbLink>
-                  ) : (
-                    <BreadcrumbLink onClick={() => navigateToPathIndex(index)} className="cursor-pointer">
-                      {folder.name}
-                    </BreadcrumbLink>
-                  )}
-                </BreadcrumbItem>
-                {index < path.length - 1 && <BreadcrumbSeparator />}
-              </React.Fragment>
-            ))}
-          </BreadcrumbList>
-        </Breadcrumb>
-        
-        {/* Last Read Comic Section */}
-        {lastReadComic && (
-          <div className="mt-4 p-2 bg-blue-800/10 rounded-md flex justify-between items-center">
-            <div className="flex items-center">
-              <File className="h-4 w-4 mr-2 text-blue-500" />
-              <span className="text-sm font-medium">Last Read: {lastReadComic.name}</span>
-              {lastReadComic.readStatus === "in_progress" && (
-                <span className="ml-2 text-xs text-muted-foreground">
-                  Page {lastReadComic.lastPage} of {lastReadComic.totalPages}
-                </span>
-              )}
+    <div
+      className={cn(
+        "mx-auto flex w-full max-w-[880px] flex-col px-4 pt-3 pb-6 sm:px-6 sm:pt-7 sm:pb-16",
+        isRoot ? "gap-7 sm:gap-10" : "gap-7 sm:gap-9",
+        className
+      )}
+    >
+      <LibraryHeader path={path} onNavigate={navigateToFolder} />
+
+      {isRoot && <h1 className="sr-only">Library</h1>}
+      {isRoot && lastRead && <ContinueCard comic={lastRead.file} />}
+
+      <section className="flex flex-col">
+        {isRoot ? (
+          <div className="flex flex-wrap items-center justify-between gap-4 pb-3 sm:pb-4">
+            <h2 className="text-[13px] font-medium text-muted-foreground">{rootCounts}</h2>
+            {sortControl}
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-end justify-between gap-4 pb-4 sm:pb-5">
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <h1 className="text-2xl font-semibold tracking-[-0.02em] break-words sm:text-[32px] sm:leading-tight">
+                {formatFolderTitle(currentFolder.name)}
+              </h1>
+              <div className="font-mono text-xs text-muted-foreground">{folderSummary}</div>
             </div>
-            <Button 
-              size="sm" 
-              onClick={() => router.push(`/read/${lastReadComic.id}`)}
-              className="text-xs bg-blue-400"
-            >
-              Continue Reading
-            </Button>
+            {sortControl}
           </div>
         )}
-      </CardHeader>
 
-      <CardContent>
-        {/* Sorting controls */}
-        <div className="flex flex-wrap gap-2 mb-4">
-          <Button variant="outline" size="sm" onClick={() => handleSort("name")} className="flex items-center gap-1">
-            Name {getSortIcon("name")}
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => handleSort("size")} className="flex items-center gap-1">
-            Size {getSortIcon("size")}
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => handleSort("type")} className="flex items-center gap-1">
-            Type {getSortIcon("type")}
-          </Button>
-        </div>
-
-        {/* File and folder list */}
-        <div className="grid gap-2">
-          {/* Parent directory button (if not at root) */}
-          {path.length > 1 && (
-            <div className="flex items-center p-3 rounded-md hover:bg-muted cursor-pointer" onClick={navigateToParent}>
-              <Folder className="h-5 w-5 mr-2 text-blue-500" />
-              <span>..</span>
-            </div>
-          )}
-
-          {/* Current folder contents */}
-          {isFolder(currentFolder) &&
-            sortItems(currentFolder.children).map((item) => (
-              <div
-                key={item.id}
-                className="flex items-center justify-between p-3 rounded-md hover:bg-muted cursor-pointer"
-                onClick={() => (isFolder(item) ? handleFolderClick(item) : handleFileClick(item))}
-              >
-                <div className="flex items-center">
-                  {item.type === "folder" ? (
-                    <Folder className="h-5 w-5 mr-2 text-blue-500" />
-                  ) : (
-                    <File className="h-5 w-5 mr-2 text-gray-500" />
-                  )}
-                  <span className="flex items-center">
-                    {item.name} 
-                    {item.type === "file" && (item as FileItem).readStatus === "completed" && (
-                      <span className="ml-2 px-1.5 py-0.5 text-xs bg-green-100 text-green-800 rounded">Read</span>
-                    )}
-                    {item.type === "file" && (item as FileItem).readStatus === "in_progress" && (
-                      <span className="ml-2 px-1.5 py-0.5 text-xs bg-yellow-100 text-yellow-800 rounded">In Progress: Page {item.lastPage} of {item.totalPages}</span>
-                    )}
-                    {item.type === "file" && (item as FileItem).readStatus === "unread" && (
-                      <span className="ml-2 px-1.5 py-0.5 text-xs bg-red-100 text-red-800 rounded">Unread</span>
-                    )}
-                  </span>
-                </div>
-
-                <div className="flex items-center text-sm text-muted-foreground">
-                  {item.type === "file" && (
-                    <>
-                      <span className="hidden sm:inline mr-4">{item.extension?.toUpperCase()}</span>
-                      <span>{item.size ? formatFileSize(item.size) : "—"}</span>
-                    </>
-                  )}
-                  {item.type === "folder" && <ChevronRight className="h-4 w-4 ml-1" />}
-                </div>
-              </div>
+        {sortedItems.length > 0 ? (
+          <ul className="divide-y border-y">
+            {sortedItems.map((item) => (
+              <li key={item.id}>
+                {isFolder(item) ? (
+                  <FolderRow
+                    folder={item}
+                    holdsLastRead={!!lastRead?.ancestorIds.includes(item.id)}
+                    onOpen={(folder) => navigateToFolder(folder.id)}
+                  />
+                ) : (
+                  <FileRow file={item} onOpen={handleFileClick} />
+                )}
+              </li>
             ))}
-
-          {/* Empty folder message */}
-          {isFolder(currentFolder) && currentFolder.children.length === 0 && (
-            <div className="text-center py-8 text-muted-foreground">This folder is empty</div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
+          </ul>
+        ) : (
+          <p className="border-y py-12 text-center text-sm text-muted-foreground">
+            {isRoot ? "Your library is empty" : "This folder is empty"}
+          </p>
+        )}
+      </section>
+    </div>
   )
 }

@@ -1,0 +1,39 @@
+.options {
+  position: fixed;
+  inset: auto 0 0;
+  width: 100%;
+  max-width: none;
+  max-height: min(82dvh, 760px);
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 24px 24px 0 0;
+}
+.options::backdrop { background: rgb(0 0 0 / 45%); }
+@media (min-width: 640px) {
+  .options {
+    inset: 68px 16px auto auto;
+    width: 360px;
+    max-height: calc(100dvh - 84px);
+    border-radius: 18px;
+  }
+  .options::backdrop { background: transparent; }
+}
+.page { animation-duration: 180ms; animation-timing-function: ease-out; }
+.slide { animation-name: reader-slide; }
+.fade { animation-name: reader-fade; }
+@keyframes reader-slide { from { opacity: .5; transform: translateX(var(--reader-slide, 20px)); } to { opacity: 1; transform: translateX(0); } }
+@keyframes reader-fade { from { opacity: .25; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .page { animation: none; } }
+
+/* Keep panning for zoomed pages, without flashing scrollbars during page turns. */
+.viewport { scrollbar-width: none; }
+.viewport::-webkit-scrollbar { display: none; }
+.loadingBook { animation: reader-breathe 1.8s ease-in-out infinite; }
+.loadingTrack { animation: reader-loading 1.4s ease-in-out infinite; }
+@keyframes reader-breathe { 50% { opacity: .55; transform: translateY(-2px); } }
+@keyframes reader-loading { from { transform: translateX(-100%); } to { transform: translateX(400%); } }
+@media (prefers-reduced-motion: reduce) {
+  .loadingBook, .loadingTrack { animation: none; }
+  .loadingTrack { transform: translateX(100%); }
+}

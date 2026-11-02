@@ -1,423 +1,208 @@
-'use client'
-import React, { useState, useEffect } from "react"
-import { Button } from "@/components/ui/button"
-import { ArrowLeft, ChevronLeft, ChevronRight, Home } from "lucide-react"
-import { useRouter } from "next/navigation"
-import { db } from "@/lib/dexieDB"
-import JSZip from "jszip"
-import { Progress } from "@/components/ui/progress" // Assuming you have a Progress component from shadcn/ui
-import ComicOverlay from "./_comicOverlay"
-import ComicView from "./_comicView"
+"use client";
 
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { ChevronLeft, ChevronRight, SlidersHorizontal } from "lucide-react";
+import { ThemeSwitcher } from "@/components/theme-controls";
+import { db } from "@/lib/dexieDB";
+import { parseComicName } from "@/lib/comic-name";
+import { pairReaderPages, type ReaderPage } from "@/lib/reader-pages";
+import { effectiveReaderLayout, tapNavigation } from "@/lib/reader-settings";
+import type { ReaderChapter } from "@/lib/reader-catalog";
+import { useComic } from "./_useComic";
+import { useReaderSettings, useReaderWakeLock } from "./_readerHooks";
+import ComicView, { type ComicViewHandle } from "./_comicView";
+import ComicOverlay, { ReaderIconButton } from "./_comicOverlay";
+import ViewOptions from "./_viewOptions";
+import ReaderLoading from "./_readerLoading";
 
-export default function ReadFilePage({
-    params,
-  }: {
-    params: Promise<{ id: string }>
-  }) {
-    const router = useRouter();
-    // @ts-ignore
-    const { id } = React.use(params);
-    const [loading, setLoading] = useState(true);
-    const [downloadStatus, setDownloadStatus] = useState<{
-        isDownloading: boolean;
-        progress: number;
-    }>({ isDownloading: false, progress: 0 });
-    const [comicName, setComicName] = useState<string>('Loading...');
-    const [error, setError] = useState<string | null>(null);
-    const [currentPage, setCurrentPage] = useState<number | null>(null);
-    const [showOverlay, setShowOverlay] = useState(false);
-    const [images, setImages] = useState<string[]>([]);
-    const [nextComic, setNextComic] = useState<string | null>(null);
-    const [previousComic, setPreviousComic] = useState<string | null>(null);
-    const [initialPage, setInitialPage] = useState<number | null>(null);
-    const [lastScrollY, setLastScrollY] = useState<number>(0);
-    const [scrollDirection, setScrollDirection] = useState<'up' | 'down' | null>(null);
-    const scrollThreshold = 5; // Minimum scroll amount to trigger the overlay
+// Serialize progress writes so a slower older IndexedDB write cannot win a page turn.
+let progressWrites = Promise.resolve();
+function saveProgress(id: string, page: number, total: number, completed: boolean) {
+  const write = progressWrites.catch(() => {}).then(() => db.markComicStatus(id, completed ? "completed" : "in_progress", page, total));
+  progressWrites = write.catch(() => {});
+  return write;
+}
+function comicTitle(name: string) { return parseComicName(name).title; }
 
-    // Find the comic in the database and load it
-    useEffect(() => {
-        async function loadComic() {
-            try {
-                // First, find the comic URL in the database
-                const comicsData = await db.getComicsData()
-                if (!comicsData) {
-                    setError("Comics data not available")
-                    setLoading(false)
-                    return
-                }
+function Reader({ id, chapter, pages, initialPage, warning }: { id: string; chapter: ReaderChapter; pages: ReaderPage[]; initialPage: number; warning?: string }) {
+  const router = useRouter();
+  const { settings, change, reset, ready, viewport, storageError } = useReaderSettings();
+  const [currentPage, setCurrentPage] = useState(initialPage);
+  const [controls, setControls] = useState(true);
+  const [panel, setPanel] = useState(false);
+  const [autoPaused, setAutoPaused] = useState(false);
+  const [turnDirection, setTurnDirection] = useState(1);
+  const [progressError, setProgressError] = useState(false);
+  const [dismissWarning, setDismissWarning] = useState(false);
+  const view = useRef<ComicViewHandle>(null);
+  const idle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const manuallyHidden = useRef(false);
+  const mouseAtBottom = useRef(false);
+  const navigating = useRef(false);
+  const started = useRef(0);
+  const complete = useRef(false);
+  const wakeStatus = useReaderWakeLock(ready && settings.keepAwake);
+  const layout = effectiveReaderLayout(settings, viewport.width > viewport.height);
+  const paged = layout !== "webtoon";
+  const groups = useMemo(() => layout === "spread" ? pairReaderPages(pages, settings.coverAlone, settings.wideAlone) : pages.map((_, index) => [index + 1]), [layout, pages, settings.coverAlone, settings.wideAlone]);
+  const groupIndex = Math.max(0, groups.findIndex(group => group.includes(currentPage)));
+  const visiblePages = groups[groupIndex];
+  const page = visiblePages[0];
+  const lastPage = visiblePages[visiblePages.length - 1];
+  const latest = useRef({ page, lastPage });
+  latest.current = { page, lastPage };
 
-                // Helper function to find a file by ID
-                const findFileById = (items: any[], id: string): any => {
-                    for (const item of items) {
-                        if (item.id === id && item.type === 'file') {
-                            return item
-                        }
-                        if (item.type === 'folder' && item.children) {
-                            const found = findFileById(item.children, id)
-                            if (found) return found
-                        }
-                    }
-                    return null
-                }
-
-                // Find the comic in the data
-                const comic = findFileById(comicsData, id)
-                if (!comic) {
-                    setError("Comic not found")
-                    setLoading(false)
-                    return
-                }
-
-                setComicName(comic.name)
-
-
-
-
-
-                // Find and set adjacent comics right away
-                const findAdjacentComics = (items: any[], currentId: string) => {
-                    // Flatten the comics structure
-                    const flattenItems = (items: any[]): any[] => {
-                        return items.reduce((acc, item) => {
-                            if (item.type === 'file') {
-                                acc.push(item)
-                            } else if (item.type === 'folder' && item.children) {
-                                acc = [...acc, ...flattenItems(item.children)]
-                            }
-                            return acc
-                        }, [])
-                    }
-
-                    const allFiles = flattenItems(items).filter(i => i.type === 'file')
-                    const currentIndex = allFiles.findIndex(f => f.id === currentId)
-
-                    const prevComic = currentIndex > 0 ? allFiles[currentIndex - 1] : null
-                    const nextComic = currentIndex >= 0 && currentIndex < allFiles.length - 1 ?
-                        allFiles[currentIndex + 1] : null
-
-                    return { prevComic, nextComic }
-                }
-
-                // Set previous and next comics immediately
-                const { prevComic, nextComic } = findAdjacentComics(comicsData, id)
-                if (prevComic) {
-                    setPreviousComic(prevComic.id)
-                }
-                if (nextComic) {
-                    setNextComic(nextComic.id)
-                }
-
-                // Save as last read comic
-                await db.setLastReadComic(id)
-
-                // Check if the comic is already downloaded
-                let comicBlob = await db.getDownloadedComic(id)
-
-                // If not downloaded, download it
-                if (!comicBlob) {
-                    setDownloadStatus({ isDownloading: true, progress: 0 })
-
-                    try {
-                        // Download the comic and track progress
-                        const downloadTracker = setInterval(async () => {
-                            const status = await db.getComicDownloadStatus(id)
-                            if (status) {
-                                setDownloadStatus({
-                                    isDownloading: status.status === 'in_progress',
-                                    progress: status.progress
-                                })
-                            }
-                        }, 300)
-
-                        // Start download
-                        await db.downloadComic({ id, url: comic.link })
-                        clearInterval(downloadTracker)
-
-                        // Get the downloaded blob
-                        comicBlob = await db.getDownloadedComic(id)
-                        if (!comicBlob) {
-                            throw new Error("Download completed but comic not found")
-                        }
-                    } catch (err) {
-                        console.error("Error downloading comic:", err)
-                        setError("Failed to download comic")
-                        setLoading(false)
-                        return
-                    }
-                }
-
-                // Process the comic archive
-                try {
-                    // Unzip the comic file
-                    const zipFile = await JSZip.loadAsync(comicBlob)
-                    const imageFiles: string[] = []
-                    const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
-
-                    // Get all files and sort them to ensure correct page order
-                    const fileNames = Object.keys(zipFile.files).sort()
-
-                    // Process each file in the zip
-                    for (const fileName of fileNames) {
-                        // Skip directories and hidden files
-                        if (zipFile.files[fileName].dir ||
-                            fileName.startsWith('__MACOSX') ||
-                            fileName.startsWith('.')) {
-                            continue
-                        }
-
-                        // Check if it's an image file
-                        const isImage = imageExtensions.some(ext =>
-                            fileName.toLowerCase().endsWith(ext)
-                        )
-
-                        if (isImage) {
-                            try {
-                                // Get the blob for this file
-                                const content = await zipFile.files[fileName].async('blob')
-                                // Create a URL for the blob
-                                const objectURL = URL.createObjectURL(content)
-                                imageFiles.push(objectURL)
-                            } catch (error) {
-                                console.error(`Error extracting file ${fileName}:`, error)
-                            }
-                        }
-                    }
-
-                    // Free up memory - remove reference to the original blob
-                    comicBlob = null
-
-                    // Explicitly tell JSZip to release any internal references (if possible)
-                    // This helps the garbage collector identify it as available for collection
-                    for (const key in zipFile.files) {
-                        // @ts-ignore
-                        // Attempt to release the file but does give a type error
-                        zipFile.files[key] = null
-                    }
-
-                    if (imageFiles.length === 0) {
-                        setError("No image files found in the comic archive")
-                    } else {
-                        setImages(imageFiles)
-                    }
-
-                    // Preload next comic if possible
-                    preloadNextComic()
-                } catch (err) {
-                    console.error("Error processing comic archive:", err)
-                    setError("Failed to process comic file")
-                }
-
-                setLoading(false)
-            } catch (err) {
-                console.error("Error loading comic:", err)
-                setError("Failed to load comic")
-                setLoading(false)
-            }
-        }
-
-        async function loadComicStatus() {
-            const comicStatus = await db.getComicStatus(id)
-            if (comicStatus && comicStatus.lastPage) {
-                setCurrentPage(comicStatus.lastPage)
-                setInitialPage(comicStatus.lastPage)
-            }
-        }
-
-        loadComicStatus().then(() => {
-            loadComic()
-        })
-
-        // Cleanup function to release object URLs when component unmounts
-        return () => {
-            // Clean up all created object URLs
-            images.forEach(url => URL.revokeObjectURL(url))
-        }
-    }, [id])
-
-    // Function to preload the next comic
-    async function preloadNextComic() {
-        try {
-            // Get all comics data
-            const comicsData = await db.getComicsData()
-            if (!comicsData) return
-
-            // Helper function to find a file by ID and return the next file
-            const findAdjacentComics = (items: any[], currentId: string) => {
-                // Flatten the comics structure
-                const flattenItems = (items: any[]): any[] => {
-                    return items.reduce((acc, item) => {
-                        if (item.type === 'file') {
-                            acc.push(item)
-                        } else if (item.type === 'folder' && item.children) {
-                            acc = [...acc, ...flattenItems(item.children)]
-                        }
-                        return acc
-                    }, [])
-                }
-
-                const allFiles = flattenItems(items).filter(i => i.type === 'file')
-
-                // Find the current index
-                const currentIndex = allFiles.findIndex(f => f.id === currentId)
-
-                // Find previous and next comics
-                const prevComic = currentIndex > 0 ? allFiles[currentIndex - 1] : null
-                const nextComic = currentIndex >= 0 && currentIndex < allFiles.length - 1 ?
-                    allFiles[currentIndex + 1] : null
-
-                return { prevComic, nextComic }
-            }
-
-            // Find adjacent comics
-            const { prevComic, nextComic } = findAdjacentComics(comicsData, id)
-
-            // Set state for previous and next comics
-            if (prevComic) {
-                setPreviousComic(prevComic.id)
-            }
-
-            if (nextComic) {
-                setNextComic(nextComic.id)
-                // Preload it in the background
-                db.preloadComic({ id: nextComic.id, url: nextComic.link })
-            }
-        } catch (error) {
-            console.error("Error preloading next comic:", error)
-            // Don't show this error to user - preloading is a background operation
-        }
-    }
-
-    // Navigation functions
-    const handleHome = () => {
-        router.push('/');
+  const activity = useCallback(() => {
+    if (manuallyHidden.current) return;
+    clearTimeout(idle.current);
+    setControls(true);
+    idle.current = setTimeout(() => {
+      // Keyboard users retain their focused controls until they move away.
+      if (!document.activeElement?.closest('nav[aria-label="Reader controls"]')) setControls(false);
+    }, 4500);
+  }, []);
+  const hideControls = useCallback(() => {
+    manuallyHidden.current = true;
+    // Require leaving the bottom edge before returning, so clicking X stays dismissed.
+    mouseAtBottom.current = true;
+    clearTimeout(idle.current);
+    setControls(false);
+  }, []);
+  useEffect(() => {
+    const revealAtEdge = (event: PointerEvent) => {
+      if (event.pointerType !== "mouse" || viewport.phone || panel) return;
+      const atBottom = event.clientY >= window.innerHeight - 64;
+      if (atBottom && !mouseAtBottom.current) {
+        manuallyHidden.current = false;
+        activity();
+      }
+      mouseAtBottom.current = atBottom;
     };
+    window.addEventListener("pointermove", revealAtEdge);
+    return () => window.removeEventListener("pointermove", revealAtEdge);
+  }, [activity, viewport.phone, panel]);
+  useEffect(() => { started.current = performance.now(); activity(); return () => clearTimeout(idle.current); }, [activity]);
+  useEffect(() => { if (panel) { manuallyHidden.current = false; clearTimeout(idle.current); setControls(true); } else activity(); }, [panel, activity]);
+  useEffect(() => { setAutoPaused(false); }, [settings.autoScroll]);
 
-    useEffect(() => {
-        if (currentPage) {
-            // if we are on the last page or the page before it log this comic as complete
-            if (currentPage === images.length || currentPage === images.length - 1) {
-                db.markComicStatus(id, "completed", currentPage)
-            } else {
-                db.markComicStatus(id, "in_progress", currentPage)
-            }
-            db.setTotalPages(id, images.length)
-        }
+  const chapterNavigation = useCallback((direction: number) => {
+    const target = direction < 0 ? chapter.previous : chapter.next;
+    if (!target || navigating.current) return;
+    navigating.current = true;
+    router.push(`/read/${encodeURIComponent(target.id)}`);
+  }, [chapter, router]);
+  const atEnd = useCallback(() => {
+    // Do not auto-advance merely because a restored page is already at the end.
+    if (panel || performance.now() - started.current < 1000) return;
+    complete.current = true;
+    latest.current = { page: pages.length, lastPage: pages.length };
+    setCurrentPage(pages.length);
+    if (settings.autoAdvance && chapter.next) chapterNavigation(1);
+    else if (settings.autoScroll > 0) { setAutoPaused(true); activity(); }
+  }, [panel, settings.autoAdvance, settings.autoScroll, chapter.next, chapterNavigation, activity, pages.length]);
+  const jump = useCallback((target: number) => {
+    const next = Math.min(pages.length, Math.max(1, target));
+    setTurnDirection(next >= currentPage ? 1 : -1);
+    setCurrentPage(next);
+    view.current?.jump(next, !paged && next === pages.length);
+    activity();
+  }, [pages.length, currentPage, paged, activity]);
+  const turn = useCallback((direction: number) => {
+    if (direction > 0 && groupIndex === groups.length - 1) { if (settings.autoAdvance) chapterNavigation(1); return; }
+    const next = groups[groupIndex + direction];
+    if (next) jump(next[0]);
+  }, [groupIndex, groups, settings.autoAdvance, chapterNavigation, jump]);
 
-    }, [currentPage, images.length])
+  const onTap = (x: number, y: number) => {
+    if (panel) return;
+    if (viewport.phone) manuallyHidden.current = false;
+    activity();
+    if (settings.autoScroll > 0 && !autoPaused && !paged) { setAutoPaused(true); return; }
+    const direction = tapNavigation(settings, settings.tapZones === "vertical" ? y : x, paged);
+    if (direction) turn(direction);
+  };
 
-    const scrollToTop = () => {
-        window.scrollTo({
-            top: 0,
-            behavior: 'smooth'
-        });
+  useEffect(() => {
+    if (!ready) return;
+    if (lastPage === pages.length) complete.current = true;
+    const timer = setTimeout(() => {
+      void saveProgress(id, page, pages.length, complete.current).then(() => setProgressError(false)).catch(() => setProgressError(true));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [id, page, lastPage, pages.length, ready]);
+  useEffect(() => {
+    const flush = () => { void saveProgress(id, latest.current.page, pages.length, complete.current).catch(() => {}); };
+    const visibility = () => { if (document.visibilityState === "hidden") flush(); };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", visibility);
+    return () => { window.removeEventListener("pagehide", flush); document.removeEventListener("visibilitychange", visibility); flush(); };
+  }, [id, pages.length]);
+
+  useEffect(() => {
+    const key = (event: KeyboardEvent) => {
+      if (panel || event.altKey || event.ctrlKey || event.metaKey || (event.target instanceof HTMLElement && event.target.closest('input, select, textarea, [contenteditable="true"]'))) return;
+      if (event.key === " " && event.target instanceof HTMLElement && event.target.closest("button, a")) return;
+      const rtl = paged && settings.direction === "rtl";
+      if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown", " ", "Escape"].includes(event.key)) {
+        event.preventDefault();
+        activity();
+        if (event.key === "ArrowLeft") turn(rtl ? 1 : -1);
+        if (event.key === "ArrowRight") turn(rtl ? -1 : 1);
+        if (event.key === "Home") jump(1);
+        if (event.key === "End") jump(pages.length);
+        if (event.key === "PageDown" || event.key === " ") { if (paged) turn(event.shiftKey ? -1 : 1); else view.current?.scrollBy(viewport.height * (event.shiftKey ? -.85 : .85)); }
+        if (event.key === "PageUp") { if (paged) turn(-1); else view.current?.scrollBy(-viewport.height * .85); }
+        if (event.key === "ArrowUp") view.current?.scrollBy(-80);
+        if (event.key === "ArrowDown") { if (!paged && view.current?.atEnd()) atEnd(); else view.current?.scrollBy(80); }
+        if (event.key === "Escape") hideControls();
+      }
     };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [panel, paged, settings.direction, activity, turn, jump, pages.length, viewport.height, atEnd, hideControls]);
 
-    const scrollToBottom = () => {
-        window.scrollTo({
-            top: document.body.scrollHeight,
-            behavior: 'smooth'
-        });
-    };
+  const back = () => { void db.setLastFolder(chapter.folderId).catch(() => {}).then(() => router.push("/")); };
+  const canPrevious = groupIndex > 0;
+  const canNext = groupIndex < groups.length - 1 || (settings.autoAdvance && !!chapter.next);
+  const rtl = paged && settings.direction === "rtl";
+  return <main className="fixed inset-0 bg-background font-sans text-foreground">
+    <header className="absolute inset-x-0 top-0 z-30 flex h-[60px] items-center gap-1 border-b bg-background/90 px-1 backdrop-blur-xl sm:gap-3 sm:px-4">
+      <ReaderIconButton label="Back to library folder" onClick={back}><ChevronLeft size={19} /></ReaderIconButton>
+      <h1 title={chapter.comic.name} className="min-w-0 flex-1 truncate text-[15px] font-medium">{comicTitle(chapter.comic.name)}</h1>
+      <button type="button" onClick={() => setPanel(true)} aria-label="View options" aria-haspopup="dialog" aria-expanded={panel} className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-muted-foreground hover:bg-secondary focus-visible:outline-2 focus-visible:outline-ring ${panel ? "bg-secondary text-foreground" : ""}`}><SlidersHorizontal size={19} /></button>
+      <ThemeSwitcher />
+    </header>
+    <div className="absolute inset-x-0 top-[60px] bottom-0">
+      {ready && <ComicView ref={view} pages={pages} settings={settings} layout={layout} visiblePages={visiblePages} currentPage={currentPage} width={viewport.width} height={viewport.height} phone={viewport.phone} panelOpen={panel} turnDirection={turnDirection} onPage={setCurrentPage}
+        onScrollDirection={direction => { if (direction < 0) activity(); else if (!panel) setControls(false); }} onTap={onTap} onTurn={turn} onEnd={atEnd} autoRunning={settings.autoScroll > 0 && !autoPaused} />}
+    </div>
+    {(progressError || (warning && !dismissWarning)) && <div role="status" className="fixed inset-x-3 top-[72px] z-30 mx-auto flex max-w-lg items-center gap-3 rounded-xl border bg-card p-3 text-xs shadow-lg"><span className="flex-1">{progressError ? "Reading progress could not be saved. Browser storage may be full." : warning}</span>{!progressError && <button type="button" onClick={() => setDismissWarning(true)} className="min-h-11 px-2 text-primary">Dismiss</button>}</div>}
+    {paged && controls && !panel && <div className="pointer-events-none fixed inset-x-3 top-1/2 z-20 hidden justify-between sm:flex">
+      <ReaderIconButton label={rtl ? "Next page" : "Previous page"} disabled={rtl ? !canNext : !canPrevious} onClick={() => turn(rtl ? 1 : -1)} className="pointer-events-auto rounded-full bg-card/80 text-foreground shadow-lg backdrop-blur"><ChevronLeft size={20} /></ReaderIconButton>
+      <ReaderIconButton label={rtl ? "Previous page" : "Next page"} disabled={rtl ? !canPrevious : !canNext} onClick={() => turn(rtl ? -1 : 1)} className="pointer-events-auto rounded-full bg-card/80 text-foreground shadow-lg backdrop-blur"><ChevronRight size={20} /></ReaderIconButton>
+    </div>}
+    <ComicOverlay visible={controls && !panel} page={page} lastVisiblePage={lastPage} total={pages.length} paged={paged} rtl={rtl} previousChapter={!!chapter.previous} nextChapter={!!chapter.next} canPrevious={canPrevious} canNext={canNext} jump={jump} turn={turn} chapter={chapterNavigation} hide={hideControls} activity={activity} autoScroll={settings.autoScroll} autoPaused={autoPaused} toggleAuto={() => { setAutoPaused(value => !value); activity(); }} />
+    <p className="sr-only" aria-live="polite" aria-atomic="true">Page {page}{lastPage > page ? ` to ${lastPage}` : ""} of {pages.length}</p>
+    {panel && <>
+      {settings.tapZones !== "off" && <div aria-hidden="true" className={`pointer-events-none fixed inset-x-0 top-[60px] bottom-0 z-40 grid ${settings.tapZones === "sides" ? "grid-cols-3" : "grid-rows-3"}`}>
+        {[0, 1, 2].map((zone) => zone === 1 ? <div key={zone} /> : <div key={zone} className="m-3 flex items-center justify-center rounded-2xl border border-dashed border-primary/60"><span className="rounded-full bg-card/90 px-3 py-1.5 text-xs text-primary">{tapNavigation(settings, zone === 0 ? 0 : 1, paged) === 1 ? "Next" : "Previous"}</span></div>)}
+      </div>}
+      <ViewOptions settings={settings} change={change} reset={reset} onClose={() => setPanel(false)} phone={viewport.phone} wakeStatus={wakeStatus} storageError={storageError} />
+    </>}
+  </main>;
+}
 
-    const toggleOverlay = () => {
-        setShowOverlay(prev => !prev);
-    };
-
-    // Add scroll listener to detect direction
-    useEffect(() => {
-        const handleScroll = () => {
-            const currentScrollY = window.scrollY;
-            
-            if (currentScrollY < lastScrollY - scrollThreshold) {
-                // Scrolling up
-                setScrollDirection('up');
-                if (!showOverlay) {
-                    setShowOverlay(true);
-                }
-            } else if (currentScrollY > lastScrollY + scrollThreshold) {
-                // Scrolling down
-                setScrollDirection('down');
-                if (showOverlay) {
-                    setShowOverlay(false);
-                }
-            }
-            
-            setLastScrollY(currentScrollY);
-        };
-
-        window.addEventListener('scroll', handleScroll, { passive: true });
-        
-        return () => {
-            window.removeEventListener('scroll', handleScroll);
-        };
-    }, [lastScrollY, showOverlay]);
-
-    if (loading) {
-        return (
-            <div className="flex flex-col items-center justify-center min-h-screen p-4">
-                <h2 className="text-xl mb-4">Loading Comic...</h2>
-                {downloadStatus.isDownloading && (
-                    <div className="w-full max-w-md">
-                        <Progress value={downloadStatus.progress} className="h-2" />
-                        <p className="text-center mt-2">{Math.round(downloadStatus.progress)}%</p>
-                    </div>
-                )}
-            </div>
-        )
-    }
-
-    if (error) {
-        return (
-            <div className="flex flex-col items-center justify-center min-h-screen p-4">
-                <h2 className="text-xl text-red-500 mb-4">{error}</h2>
-                <Button onClick={handleHome} className="touch-manipulation hover:bg-blue-400">
-                    <ArrowLeft className="mr-2" size={16} />
-                    Back
-                </Button>
-            </div>
-        )
-    }
-
-    return (
-        <div className="flex flex-col min-h-screen">
-            {/* Header */}
-            <div className="bg-background px-2 py-3 sm:p-4 flex items-center justify-between shadow-md top-0 z-10">
-                <div className="flex items-center flex-1 min-w-0">
-                    <Button variant="outline" size="icon" onClick={handleHome} className="touch-manipulation shrink-0 ">
-                        <Home size={18} />
-                    </Button>
-                    <h1 className="ml-2 sm:ml-4 text-base sm:text-xl font-semibold truncate">
-                        {comicName}
-                    </h1>
-                </div>
-                <div className="text-xs sm:text-sm ml-2 shrink-0">
-                    {currentPage}/{images.length}
-                </div>
-            </div>
-
-            {/* Overlay */}
-            <ComicOverlay
-                visible={showOverlay}
-                comicName={comicName}
-                currentPage={currentPage ?? 1}
-                totalPages={images.length}
-                onClose={toggleOverlay}
-                onScrollToTop={scrollToTop}
-                onScrollToBottom={scrollToBottom}
-                nextComic={nextComic}
-                previousComic={previousComic}
-            />
-
-            {/* Comic View */}
-            <ComicView
-                images={images}
-                onPageChange={setCurrentPage}
-                onClick={toggleOverlay}
-                initialPage={initialPage ?? 1}
-            />
-
-
-        </div>
-    )
+export default function ReadFilePage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
+  const [retry, setRetry] = useState(0);
+  const comic = useComic(id, retry);
+  if (comic.loading || comic.error || !comic.chapter) return <main className="flex min-h-dvh flex-col bg-background font-sans text-foreground">
+    <header className="flex h-[60px] items-center gap-3 border-b px-4"><Link href="/" aria-label="Back to library" className="flex h-11 w-11 items-center justify-center rounded-xl text-muted-foreground hover:bg-secondary"><ChevronLeft size={19} /></Link><h1 className="min-w-0 flex-1 truncate text-sm font-medium">{comic.chapter ? comicTitle(comic.chapter.comic.name) : "Reader"}</h1><ThemeSwitcher /></header>
+    <div className="flex flex-1 flex-col items-center justify-center gap-5 px-6 text-center">
+      {comic.error ? <><h2 className="text-lg font-medium">Couldn’t open this comic</h2><p role="alert" className="max-w-md text-sm text-muted-foreground">{comic.error}</p><button type="button" onClick={() => setRetry(value => value + 1)} className="min-h-11 rounded-xl bg-primary px-5 text-sm font-medium text-primary-foreground">Try again</button></> : <ReaderLoading phase={comic.phase} progress={comic.progress} />}
+    </div>
+  </main>;
+  return <Reader key={`${id}-${retry}`} id={id} chapter={comic.chapter} pages={comic.pages} initialPage={comic.initialPage} warning={comic.warning} />;
 }
