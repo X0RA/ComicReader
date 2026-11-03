@@ -7,15 +7,7 @@ import { maintainArchives } from "@/lib/archiveMaintenance";
 import { db } from "@/lib/dexieDB";
 import { findReaderChapter, type ReaderChapter } from "@/lib/reader-catalog";
 import { archiveImageNames, type ReaderPage } from "@/lib/reader-pages";
-
-function dimensions(url: string): Promise<{ width: number; height: number }> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => { resolve({ width: image.naturalWidth, height: image.naturalHeight }); image.src = ""; };
-    image.onerror = () => reject(new Error("A page image could not be decoded."));
-    image.src = url;
-  });
-}
+import { prepareReaderPage } from "@/lib/reader-image";
 
 interface ComicState {
   id: string;
@@ -72,9 +64,9 @@ export function useComic(id: string, retry: number) {
                 if (cancelled) return;
                 url = URL.createObjectURL(content);
                 urls.push(url);
-                const size = await dimensions(url);
+                const page = await prepareReaderPage(url, names[index]);
                 if (cancelled) return;
-                pages[index] = { url, name: names[index], ...size };
+                pages[index] = page;
               } catch { if (url) URL.revokeObjectURL(url); skipped++; }
               completed++;
               update({ progress: completed / names.length * 100 });

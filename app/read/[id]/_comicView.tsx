@@ -1,35 +1,14 @@
 "use client";
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
-import { detectUniformMargins, FULL_PAGE, readerPageWidth, type CropBounds, type ReaderPage } from "@/lib/reader-pages";
+import { FULL_PAGE, readerPageWidth, type ReaderPage } from "@/lib/reader-pages";
 import type { ReaderSettings } from "@/lib/reader-settings";
 import styles from "./reader.module.css";
 
-const crops = new WeakMap<ReaderPage, CropBounds>();
 function PageImage({ page, number, settings, availableWidth, availableHeight, eager }: {
   page: ReaderPage; number: number; settings: ReaderSettings; availableWidth: number; availableHeight: number; eager: boolean;
 }) {
-  const ref = useRef<HTMLImageElement>(null);
-  const [crop, setCrop] = useState<CropBounds>(() => crops.get(page) ?? FULL_PAGE);
-  const analyse = useCallback(() => {
-    const image = ref.current;
-    if (!settings.crop || !image?.naturalWidth || crops.has(page)) return;
-    try {
-      const scale = Math.min(1, 500 / Math.max(page.width, page.height));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(8, Math.round(page.width * scale));
-      canvas.height = Math.max(8, Math.round(page.height * scale));
-      const context = canvas.getContext("2d", { willReadFrequently: true });
-      if (!context) return;
-      context.drawImage(image, 0, 0, canvas.width, canvas.height);
-      const bounds = detectUniformMargins(context.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height);
-      crops.set(page, bounds);
-      setCrop(bounds);
-      canvas.width = canvas.height = 0;
-    } catch { /* A failed canvas read leaves the original page intact. */ }
-  }, [page, settings.crop]);
-  useEffect(() => { analyse(); }, [analyse]);
-  const bounds = settings.crop ? crop : FULL_PAGE;
+  const bounds = settings.crop ? page.crop : FULL_PAGE;
   const croppedWidth = page.width * (bounds.right - bounds.left);
   const croppedHeight = page.height * (bounds.bottom - bounds.top);
   const width = readerPageWidth({ width: croppedWidth, height: croppedHeight }, settings.fit, availableWidth, availableHeight, settings.zoom, settings.noUpscale);
@@ -38,7 +17,7 @@ function PageImage({ page, number, settings, availableWidth, availableHeight, ea
   return <div className={`relative shrink-0 overflow-hidden ${settings.shadow ? "shadow-2xl" : ""}`} style={{ width, height }}>
     {/* Local object URLs are decoded from the actual cached archive. */}
     {/* eslint-disable-next-line @next/next/no-img-element */}
-    <img ref={ref} src={page.url} alt={`Page ${number}`} draggable={false} loading={eager ? "eager" : "lazy"} decoding="async" onLoad={analyse}
+    <img src={page.url} alt={`Page ${number}`} draggable={false} loading={eager ? "eager" : "lazy"} decoding="async"
       width={page.width} height={page.height} className="absolute block max-w-none select-none" style={{ filter: settings.greyscale ? "grayscale(1)" : undefined, width: page.width * scale, height: page.height * scale, left: -bounds.left * page.width * scale, top: -bounds.top * page.height * scale }} />
     <span aria-hidden="true" className="pointer-events-none absolute inset-0 bg-black" style={{ opacity: 1 - settings.brightness / 100 }} />
     <span aria-hidden="true" className="pointer-events-none absolute inset-0" style={{ background: `rgba(255, 150, 60, ${settings.warmth / 100 * .3})`, mixBlendMode: "multiply" }} />

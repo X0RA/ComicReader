@@ -1,6 +1,6 @@
 export interface PageSize { width: number; height: number }
 export interface CropBounds { left: number; top: number; right: number; bottom: number }
-export interface ReaderPage extends PageSize { url: string; name: string }
+export interface ReaderPage extends PageSize { url: string; name: string; crop: CropBounds }
 export const FULL_PAGE: CropBounds = { left: 0, top: 0, right: 1, bottom: 1 };
 
 /** Page numbers are one-based throughout navigation and persisted progress. */
