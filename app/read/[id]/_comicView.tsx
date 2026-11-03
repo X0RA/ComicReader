@@ -5,9 +5,11 @@ import { croppedPageSize, readerCropBounds, readerPageWidth, type ReaderPage } f
 import type { ReaderSettings } from "@/lib/reader-settings";
 import styles from "./reader.module.css";
 
-function PageImage({ page, number, settings, availableWidth, availableHeight, eager, magnification }: {
-  page: ReaderPage; number: number; settings: ReaderSettings; availableWidth: number; availableHeight: number; eager: boolean; magnification: number;
+function PageImage({ page, number, settings, availableWidth, availableHeight, eager, magnification, enhanced }: {
+  page: ReaderPage; number: number; settings: ReaderSettings; availableWidth: number; availableHeight: number; eager: boolean; magnification: number; enhanced?: string;
 }) {
+  const [failed, setFailed] = useState<string>();
+  const source = enhanced && enhanced !== failed ? enhanced : page.url;
   const bounds = readerCropBounds(page, settings.crop, settings.cropTightness, settings.cropExtraHorizontal, settings.cropExtraVertical);
   const { width: croppedWidth, height: croppedHeight } = croppedPageSize(page, bounds);
   const width = readerPageWidth({ width: croppedWidth, height: croppedHeight }, settings.fit, availableWidth, availableHeight, settings.zoom, settings.noUpscale) * magnification;
@@ -16,7 +18,7 @@ function PageImage({ page, number, settings, availableWidth, availableHeight, ea
   return <div className={`relative shrink-0 overflow-hidden ${settings.shadow ? "shadow-2xl" : ""}`} style={{ width, height }}>
     {/* Local object URLs are decoded from the actual cached archive. */}
     {/* eslint-disable-next-line @next/next/no-img-element */}
-    <img src={page.url} alt={`Page ${number}`} draggable={false} loading={eager ? "eager" : "lazy"} decoding="async"
+    <img src={source} data-upscaled={source !== page.url || undefined} onError={() => { if (enhanced) setFailed(enhanced); }} alt={`Page ${number}`} draggable={false} loading={eager ? "eager" : "lazy"} decoding="async"
       width={page.width} height={page.height} className="absolute block max-w-none select-none" style={{ filter: settings.greyscale ? "grayscale(1)" : undefined, width: page.width * scale, height: page.height * scale, left: -bounds.left * page.width * scale, top: -bounds.top * page.height * scale }} />
     <span aria-hidden="true" className="pointer-events-none absolute inset-0 bg-black" style={{ opacity: 1 - settings.brightness / 100 }} />
     <span aria-hidden="true" className="pointer-events-none absolute inset-0" style={{ background: `rgba(255, 150, 60, ${settings.warmth / 100 * .3})`, mixBlendMode: "multiply" }} />
@@ -30,6 +32,7 @@ export interface ComicViewHandle {
 }
 interface Props {
   pages: ReaderPage[];
+  enhanced?: ReadonlyMap<number, string>;
   settings: ReaderSettings;
   layout: ReaderSettings["layout"];
   visiblePages: number[];
@@ -47,7 +50,7 @@ interface Props {
   autoRunning: boolean;
 }
 
-const ComicView = forwardRef<ComicViewHandle, Props>(function ComicView({ pages, settings, layout, visiblePages, currentPage, width, height, phone, panelOpen, turnDirection, onPage, onScrollDirection, onTap, onTurn, onEnd, autoRunning }, forwardedRef) {
+const ComicView = forwardRef<ComicViewHandle, Props>(function ComicView({ pages, enhanced, settings, layout, visiblePages, currentPage, width, height, phone, panelOpen, turnDirection, onPage, onScrollDirection, onTap, onTurn, onEnd, autoRunning }, forwardedRef) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef(new Map<number, HTMLDivElement>());
   const [stageWidth, setStageWidth] = useState(width);
@@ -256,7 +259,7 @@ const ComicView = forwardRef<ComicViewHandle, Props>(function ComicView({ pages,
           {page.status || spreadPending ? <div aria-label={`Page ${number}`} aria-busy={page.status === "pending" || spreadPending}
             className="flex items-center justify-center bg-background/60 text-sm text-muted-foreground" style={{ width: placeholderWidth, height: placeholderWidth * page.height / page.width }}>
             {page.status === "error" ? "This page could not be read." : "Preparing page…"}
-          </div> : <PageImage page={page} number={number} settings={settings} availableWidth={pageWidth} availableHeight={availableHeight} eager={paged || Math.abs(number - currentPage) < 3} magnification={magnification} />}
+          </div> : <PageImage enhanced={enhanced?.get(number)} page={page} number={number} settings={settings} availableWidth={pageWidth} availableHeight={availableHeight} eager={paged || Math.abs(number - currentPage) < 3} magnification={magnification} />}
         </div>;
       })}
     </div>

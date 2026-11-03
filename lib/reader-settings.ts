@@ -1,6 +1,8 @@
+import type { UpscaleSettings } from "./upscale/models";
+
 export const READER_SETTINGS_KEY = "comic-reader-view-options";
 
-export interface ReaderSettings {
+export interface ReaderSettings extends UpscaleSettings {
   layout: "webtoon" | "single" | "spread";
   maxWidth: number;
   gap: boolean;
@@ -36,6 +38,7 @@ export function defaultReaderSettings(phone: boolean): ReaderSettings {
     direction: "ltr", autoSpread: phone, spineGap: 2, coverAlone: true, wideAlone: true,
     fit: phone ? "width" : "height", zoom: 100, noUpscale: true, crop: false, cropTightness: 50,
     cropExtraHorizontal: 0, cropExtraVertical: 0,
+    upscaleModel: "off", upscaleMode: "A", upscaleScale: "2", upscaleDenoise: "conservative", upscaleJobs: 1,
     tapZones: "sides", swapTapZones: false, wheel: "scroll", transition: "slide",
     autoScroll: 0, autoAdvance: true, background: "black", brightness: 100,
     warmth: 0, shadow: !phone, greyscale: false, keepAwake: true,
@@ -43,12 +46,14 @@ export function defaultReaderSettings(phone: boolean): ReaderSettings {
 }
 
 const choices = {
+  upscaleModel: ["off", "anime4k", "anime-v3", "cugan", "anime-sharp"], upscaleMode: ["A", "B", "C"],
+  upscaleScale: ["2", "3", "4"], upscaleDenoise: ["conservative", "none", "denoise3x"],
   layout: ["webtoon", "single", "spread"], direction: ["ltr", "rtl"],
   fit: ["width", "height", "original"], tapZones: ["off", "sides", "vertical"],
   wheel: ["scroll", "turn"], transition: ["none", "slide", "fade"],
   background: ["black", "grey", "white"],
 };
-const ranges = { maxWidth: [400, 1200], spineGap: [0, 24], zoom: [50, 200], cropTightness: [0, 100], cropExtraHorizontal: [0, 10], cropExtraVertical: [0, 10], autoScroll: [0, 10], brightness: [20, 100], warmth: [0, 100] };
+const ranges = { upscaleJobs: [1, 3], maxWidth: [400, 1200], spineGap: [0, 24], zoom: [50, 200], cropTightness: [0, 100], cropExtraHorizontal: [0, 10], cropExtraVertical: [0, 10], autoScroll: [0, 10], brightness: [20, 100], warmth: [0, 100] };
 
 /** Only known, correctly typed values enter rendering or CSS; old/partial settings are safe. */
 export function parseReaderSettings(raw: string | null, phone: boolean): ReaderSettings {
@@ -74,6 +79,7 @@ export function parseReaderSettings(raw: string | null, phone: boolean): ReaderS
       } else if (typeof value === "boolean") target[key] = value;
     }
   } catch { /* Corrupt or unavailable storage never prevents reading. */ }
+  result.upscaleJobs = Math.floor(result.upscaleJobs);
   if (result.layout === "webtoon" && result.fit === "height") result.fit = "width";
   return result;
 }

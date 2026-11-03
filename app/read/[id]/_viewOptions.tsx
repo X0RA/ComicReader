@@ -3,6 +3,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { BookOpen, PanelTop, PanelsTopLeft, RotateCcw, X } from "lucide-react";
 import type { ReaderSettings } from "@/lib/reader-settings";
+import UpscaleOptions from "./_upscaleOptions";
 import styles from "./reader.module.css";
 
 function Segment<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: readonly (readonly [T, string])[]; onChange: (value: T) => void }) {
@@ -26,8 +27,8 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   return <section aria-label={title} className="space-y-3 border-t pt-5"><h3 className="text-sm font-semibold">{title}</h3>{children}</section>;
 }
 
-export default function ViewOptions({ settings: s, change, reset, onClose, phone, wakeStatus, storageError }: {
-  settings: ReaderSettings; change: (patch: Partial<ReaderSettings>) => void; reset: () => void; onClose: () => void; phone: boolean; wakeStatus: string; storageError: boolean;
+export default function ViewOptions({ settings: s, change, reset, onClose, phone, wakeStatus, storageError, upscaleBusy = false }: {
+  settings: ReaderSettings; change: (patch: Partial<ReaderSettings>) => void; reset: () => void; onClose: () => void; phone: boolean; wakeStatus: string; storageError: boolean; upscaleBusy?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -67,6 +68,7 @@ export default function ViewOptions({ settings: s, change, reset, onClose, phone
             <p className="text-xs leading-relaxed text-muted-foreground">Tightness adjusts automatic border cropping. Extra horizontal crop trims the left and right edges; vertical trims the top and bottom. Each percentage applies per edge after automatic cropping.</p>
           </>}
         </Section>
+        <UpscaleOptions settings={s} change={change} busy={upscaleBusy} />
         <Section title="Navigation">
           <Segment label="Tap zones" value={s.tapZones} options={[["off", "Off"], ["sides", "Sides"], ["vertical", "Top & bottom"]]} onChange={tapZones => change({ tapZones })} />
           {s.tapZones !== "off" && toggle("swapTapZones", "Swap tap zones")}

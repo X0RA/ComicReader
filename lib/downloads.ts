@@ -1,3 +1,4 @@
+import { clearUpscaleModels } from "./upscale/model-cache";
 import { db, DownloadRecord } from './dexieDB';
 import { archiveDirectory, openArchive, removeArchive, storageLock, supportsOPFS, verifyZip, writeArchive, uniqueId, namedLock, tryLock, writerKey, leaseKey } from './archiveStore';
 
@@ -266,5 +267,6 @@ export async function hardReset(reload = true) {
       if (!isUnavailable(error)) throw new Error('Database reset succeeded, but archive files could not be removed. Retry the reset.');
     } finally { await db.open(); }
   });
+  await clearUpscaleModels();
   if (reload) location.reload();
 }

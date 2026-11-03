@@ -20,6 +20,8 @@ import ComicOverlay, { ReaderIconButton } from "./_comicOverlay";
 import ViewOptions from "./_viewOptions";
 import ReaderLoading from "./_readerLoading";
 import PreparationProgress from "./_preparationProgress";
+import { useUpscaling } from "./_useUpscaling";
+import UpscaleControls from "./_upscaleControls";
 import styles from "./reader.module.css";
 
 // Serialize progress writes so a slower older IndexedDB write cannot win a page turn.
@@ -68,6 +70,7 @@ function Reader({ id, chapter, pages, initialPage, prepared, preparing, prioriti
   spreadAnchor.current = { policy: spreadPolicy, pages: visiblePages };
   const page = visiblePages[0];
   const lastPage = visiblePages[visiblePages.length - 1];
+  const upscaling = useUpscaling(pages, visiblePages, settings, viewport.phone);
   const visibleReady = !visiblePages.some(number => pages[number - 1].status === "pending");
   const bookmarkChoices = visiblePages.filter(number => !pages[number - 1].status).map(number =>
     bookmarkState.bookmarks.find(bookmark => bookmark.page === number) ?? {
@@ -190,6 +193,7 @@ function Reader({ id, chapter, pages, initialPage, prepared, preparing, prioriti
     <header className="absolute inset-x-0 top-0 z-30 flex h-[60px] items-center gap-1 border-b bg-background/90 px-1 backdrop-blur-xl sm:gap-3 sm:px-4">
       <ReaderIconButton label="Back to library folder" onClick={back}><ChevronLeft size={19} /></ReaderIconButton>
       <h1 title={chapter.comic.name} className="min-w-0 flex-1 truncate text-[15px] font-medium">{comicTitle(chapter.comic.name)}</h1>
+      <UpscaleControls upscaling={upscaling} />
       {preparing && <PreparationProgress prepared={prepared} total={pages.length} />}
       <ReaderIconButton label="Bookmark page" disabled={bookmarkState.loading || !bookmarkChoices.length} onClick={() => setBookmarkEditor({ bookmark: bookmarkChoices[0], choices: bookmarkChoices })}>
         {bookmarkState.bookmarks.some(bookmark => visiblePages.includes(bookmark.page)) ? <Bookmark size={18} className="fill-primary text-primary" /> : <BookmarkPlus size={18} />}
@@ -199,7 +203,7 @@ function Reader({ id, chapter, pages, initialPage, prepared, preparing, prioriti
       <ThemeSwitcher />
     </header>
     <div className="absolute inset-x-0 top-[60px] bottom-0">
-      {ready && <ComicView ref={view} pages={pages} settings={settings} layout={layout} visiblePages={visiblePages} currentPage={currentPage} width={viewport.width} height={viewport.height} phone={viewport.phone} panelOpen={panel || !!bookmarkEditor} turnDirection={turnDirection} onPage={setCurrentPage}
+      {ready && <ComicView ref={view} pages={pages} enhanced={upscaling.state.images} settings={settings} layout={layout} visiblePages={visiblePages} currentPage={currentPage} width={viewport.width} height={viewport.height} phone={viewport.phone} panelOpen={panel || !!bookmarkEditor} turnDirection={turnDirection} onPage={setCurrentPage}
         onScrollDirection={direction => { if (!viewport.phone) return; if (direction < 0) activity(); else if (!panel) setControls(false); }} onTap={onTap} onTurn={turn} onEnd={atEnd} autoRunning={settings.autoScroll > 0 && !autoPaused && pages[currentPage - 1].status !== "pending"} />}
     </div>
     {(progressError || (warning && !dismissWarning)) && <div role="status" className="fixed inset-x-3 top-[72px] z-30 mx-auto flex max-w-lg items-center gap-3 rounded-xl border bg-card p-3 text-xs shadow-lg"><span className="flex-1">{progressError ? "Reading progress could not be saved. Browser storage may be full." : warning}</span>{!progressError && <button type="button" onClick={() => setDismissWarning(true)} className="min-h-11 px-2 text-primary">Dismiss</button>}</div>}
@@ -221,7 +225,7 @@ function Reader({ id, chapter, pages, initialPage, prepared, preparing, prioriti
       {settings.tapZones !== "off" && <div aria-hidden="true" className={`pointer-events-none fixed inset-x-0 top-[60px] bottom-0 z-40 grid ${settings.tapZones === "sides" ? "grid-cols-3" : "grid-rows-3"}`}>
         {[0, 1, 2].map((zone) => zone === 1 ? <div key={zone} /> : <div key={zone} className="m-3 flex items-center justify-center rounded-2xl border border-dashed border-primary/60"><span className="rounded-full bg-card/90 px-3 py-1.5 text-xs text-primary">{tapNavigation(settings, zone === 0 ? 0 : 1, paged) === 1 ? "Next" : "Previous"}</span></div>)}
       </div>}
-      <ViewOptions settings={settings} change={change} reset={reset} onClose={() => setPanel(false)} phone={viewport.phone} wakeStatus={wakeStatus} storageError={storageError} />
+      <ViewOptions upscaleBusy={["loading", "running", "waiting", "paused"].includes(upscaling.state.status)} settings={settings} change={change} reset={reset} onClose={() => setPanel(false)} phone={viewport.phone} wakeStatus={wakeStatus} storageError={storageError} />
     </>}
   </main>;
 }

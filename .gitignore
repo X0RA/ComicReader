@@ -43,3 +43,6 @@ next-env.d.ts
 .serena
 /test-results/
 /playwright-report/
+
+# Generated ONNX worker/runtime assets (predev/prebuild)
+/public/upscale-runtime/

@@ -1,14 +1,22 @@
+import { readFile } from 'node:fs/promises';
 import { build } from 'esbuild';
 import { createServer } from 'node:http';
 import JSZip from 'jszip';
 const bundle = await build({ entryPoints: ['e2e/harness.ts'], bundle: true, write: false, platform: 'browser' });
 const readerBundle = await build({ entryPoints: ['e2e/reader-harness.tsx'], bundle: true, write: false, platform: 'browser', loader: { '.module.css': 'empty' } });
+const upscaleBundle = await build({ entryPoints: ['e2e/upscale-harness.tsx'], bundle: true, write: false, platform: 'browser', loader: { '.module.css': 'empty' } });
 const zip = new JSZip();
 zip.file('page1.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'));
 const comic = await zip.generateAsync({ type: 'nodebuffer' });
 zip.file('payload.bin', Buffer.alloc(2 * 1024 * 1024, 37));
 const large = await zip.generateAsync({ type: 'nodebuffer' });
-createServer((req, res) => {
+createServer(async (req, res) => {
+  if (/^\/upscale-(models|runtime)\/[a-zA-Z0-9._-]+$/.test(req.url || '')) {
+    try { const data = await readFile('public' + req.url); res.setHeader('Content-Type', req.url.endsWith('.wasm') ? 'application/wasm' : /\.m?js$/.test(req.url) ? 'text/javascript' : 'application/octet-stream'); res.end(data); } catch { res.writeHead(404); res.end(); }
+    return;
+  }
+  if (req.url === '/upscale.js') { res.setHeader('Content-Type', 'text/javascript'); res.end(upscaleBundle.outputFiles[0].contents); return; }
+  if (req.url === '/upscale') { res.end('<!doctype html><title>Upscaling tests</title><body><script src="/upscale.js"></script></body>'); return; }
   if (req.url === '/bundle.js') { res.setHeader('Content-Type', 'text/javascript'); res.end(bundle.outputFiles[0].contents); }
   else if (req.url === '/reader.js') { res.setHeader('Content-Type', 'text/javascript'); res.end(readerBundle.outputFiles[0].contents); }
   else if (req.url === '/reader') res.end('<!doctype html><title>Reader tests</title><body><script src="/reader.js"></script></body>');
