@@ -9,7 +9,8 @@
     "test:storage": "playwright test",
     "predev": "node scripts/build-upscale.mjs",
     "prebuild": "node scripts/build-upscale.mjs",
-    "build:upscale": "node scripts/build-upscale.mjs"
+    "build:upscale": "node scripts/build-upscale.mjs",
+    "postbuild": "node scripts/build-offline.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dropdown-menu": "^2.2.1",

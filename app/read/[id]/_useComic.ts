@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { localCatalog } from "@/lib/local-catalog";
+import { isOfflineReading } from "@/lib/offline";
 import JSZip from "jszip";
 import { withArchive, getComicDownloadStatus, preloadComic } from "@/lib/downloads";
 import { maintainArchives } from "@/lib/archiveMaintenance";
@@ -39,7 +41,7 @@ export function useComic(id: string, retry: number, requestedPage?: number) {
     setState({ id, requestedPage, pages: [], initialPage: 1, prepared: 0, preparing: false, loading: true, progress: 0, phase: "Opening comic…" });
     async function load() {
       try {
-        const catalog = await db.getComicsData() ?? await db.updateFromRemoteDB();
+        const catalog = await localCatalog() ?? (isOfflineReading() ? [] : await db.updateFromRemoteDB());
         if (cancelled) return;
         const chapter = findReaderChapter(catalog, id);
         if (!chapter) throw new Error("This comic is not in the library. Return to the library to refresh the catalog.");

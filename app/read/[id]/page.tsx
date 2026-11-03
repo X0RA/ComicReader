@@ -2,6 +2,7 @@
 
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { isOfflineReading } from "@/lib/offline";
 import { useRouter } from "next/navigation";
 import { Bookmark, BookmarkPlus, ChevronLeft, ChevronRight, PanelRight, SlidersHorizontal } from "lucide-react";
 import { ThemeSwitcher } from "@/components/theme-controls";
@@ -109,7 +110,8 @@ function Reader({ id, chapter, pages, initialPage, prepared, preparing, prioriti
     const target = direction < 0 ? chapter.previous : chapter.next;
     if (!target || navigating.current) return;
     navigating.current = true;
-    router.push(`/read/${encodeURIComponent(target.id)}`);
+    const url = `/read/${encodeURIComponent(target.id)}`;
+    if (isOfflineReading()) location.assign(url); else router.push(url);
   }, [chapter, router]);
   const atEnd = useCallback(() => {
     // Do not auto-advance merely because a restored page is already at the end.
@@ -185,7 +187,7 @@ function Reader({ id, chapter, pages, initialPage, prepared, preparing, prioriti
     return () => window.removeEventListener("keydown", key);
   }, [panel, bookmarkEditor, paged, settings.direction, activity, turn, jump, pages.length, viewport.height, atEnd, hideControls]);
 
-  const back = () => { void db.setLastFolder(chapter.folderId).catch(() => {}).then(() => router.push("/")); };
+  const back = () => { void db.setLastFolder(chapter.folderId).catch(() => {}).then(() => { if (isOfflineReading()) location.assign("/"); else router.push("/"); }); };
   const canPrevious = groupIndex > 0;
   const canNext = groupIndex < groups.length - 1 || (settings.autoAdvance && !!chapter.next);
   const rtl = paged && settings.direction === "rtl";

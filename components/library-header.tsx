@@ -1,5 +1,6 @@
 "use client"
 
+import { OfflineStatus } from "./offline-support"
 import Link from "next/link"
 import { ArrowLeftRight, Bookmark, BookOpen, Database } from "lucide-react"
 import { ThemeSwitcher } from "@/components/theme-controls"
@@ -24,7 +25,7 @@ export function LibraryHeader({ path = [], onNavigate }: LibraryHeaderProps) {
   const hasHiddenCrumbs = folders.length > 2
 
   return (
-    <header className="flex items-center justify-between gap-4">
+    <div className="space-y-2"><header className="flex items-center justify-between gap-4">
       <nav aria-label="Breadcrumb" className="min-w-0 flex-1 text-[15px] font-medium">
         <ol className="flex min-h-11 min-w-0 items-center gap-2">
           {current ? (
@@ -98,6 +99,6 @@ export function LibraryHeader({ path = [], onNavigate }: LibraryHeaderProps) {
         <Link href="/backup" aria-label="Backup & transfer" title="Backup & transfer" className="flex size-11 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"><ArrowLeftRight aria-hidden="true" className="size-[18px]" strokeWidth={1.8} /></Link>
         <ThemeSwitcher />
       </div>
-    </header>
+    </header><OfflineStatus /></div>
   )
 }

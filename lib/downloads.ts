@@ -1,3 +1,4 @@
+import { isOfflineReading } from "./offline";
 import { clearUpscaleModels } from "./upscale/model-cache";
 import { db, DownloadRecord } from './dexieDB';
 import { archiveDirectory, openArchive, removeArchive, storageLock, supportsOPFS, verifyZip, writeArchive, uniqueId, namedLock, tryLock, writerKey, leaseKey } from './archiveStore';
@@ -72,16 +73,17 @@ async function transfer(comic: ComicSource, controller: AbortController, backgro
   // Fast path avoids waiting for a migration of an already readable archive.
   const cached = await namedLock(leaseKey(comic.id), async () => {
     const row = await db.downloads.get(comic.id);
-    if (row?.status !== 'completed' || row.url !== comic.url) return false;
+    if (row?.status !== 'completed' || (row.url !== comic.url && !isOfflineReading())) return false;
     try { await readStored(row); return true; } catch (error) { if (!isUnavailable(error)) throw error; return false; }
   }, 'shared', signal);
   if (cached) return;
   await namedLock(writerKey(comic.id), async () => {
     signal.throwIfAborted();
     const saved = await db.downloads.get(comic.id);
-    if (saved?.status === 'completed' && saved.url === comic.url) {
+    if (saved?.status === 'completed' && (saved.url === comic.url || isOfflineReading())) {
       try { await readStored(saved); return; } catch (error) { if (!isUnavailable(error)) throw error; }
     }
+    if (isOfflineReading()) throw new Error('This comic is not downloaded on this device. Connect to the internet and download it first.');
     const backend = await supportsOPFS() ? 'opfs' : 'idb';
     const token = uniqueId();
     const pendingFile = backend === 'opfs' ? `${token}.cbz` : undefined;
@@ -182,6 +184,7 @@ export function downloadComic(comic: ComicSource, signal?: AbortSignal, backgrou
 let preload: Promise<void> | undefined;
 let preloadId: string | undefined;
 export function preloadComic(comic: ComicSource) {
+  if (isOfflineReading()) return;
   if (!preload) {
     preloadId = comic.id;
     preload = downloadComic(comic, undefined, true).catch(() => {}).finally(() => { preload = undefined; preloadId = undefined; });
@@ -197,7 +200,7 @@ export async function withArchive<T>(comic: ComicSource, fn: (blob: Blob) => Pro
         let blob: Blob;
         try {
           const row = await db.downloads.get(comic.id);
-          if (!row || row.url !== comic.url || row.status !== 'completed') throw new ArchiveUnavailableError('Archive no longer available.');
+          if (!row || (row.url !== comic.url && !isOfflineReading()) || row.status !== 'completed') throw new ArchiveUnavailableError('Archive no longer available.');
           blob = await readStored(row);
         } catch (error) { storageFailure = isUnavailable(error); throw error; }
         // Callback failures (including OOM) are not evidence that stored bytes are bad.

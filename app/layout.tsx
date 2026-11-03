@@ -1,3 +1,4 @@
+import OfflineSupport from "@/components/offline-support";
 import { ThemeControls } from "@/components/theme-controls";
 import type { Metadata } from "next";
 import { Toaster } from "@/components/ui/sonner"
@@ -78,6 +79,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <ThemeControls>
+          <OfflineSupport />
           {children}
           <Toaster />
         </ThemeControls>

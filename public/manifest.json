@@ -23,7 +23,6 @@
   "background_color": "#FFFFFF",
   "start_url": "/",
   "display": "standalone",
-  "orientation": "portrait",
   "screenshots": [
     {
       "src": "/screenshots/mobile-home.png",
@@ -37,5 +36,7 @@
       "type": "image/png",
       "form_factor": "wide"
     }
-  ]
+  ],
+  "id": "/",
+  "scope": "/"
 }

@@ -1,3 +1,4 @@
+import { isOfflineReading } from "./offline";
 import { db } from './dexieDB';
 import { ContentItem } from './types';
 import { removeArchive, storageLock, supportsOPFS, writeArchive, uniqueId, namedLock, tryLock, writerKey, leaseKey } from './archiveStore';
@@ -5,6 +6,7 @@ import { enforceBudget, isUnavailable, readStored, removeStored, storageInfo, sw
 
 let running: Promise<void> | undefined;
 export function maintainArchives() {
+  if (isOfflineReading()) return Promise.resolve();
   return running ??= run().finally(() => { running = undefined; });
 }
 async function run() {

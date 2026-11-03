@@ -1,6 +1,8 @@
 'use client'
 import { useCallback, useEffect, useRef, useState } from "react";
 import { maintainArchives } from "@/lib/archiveMaintenance";
+import { localCatalog } from "@/lib/local-catalog";
+import { isOfflineReading } from "@/lib/offline";
 import { db } from "@/lib/dexieDB";
 import { FileManager } from "@/components/file-manager";
 import { LibraryHeader } from "@/components/library-header";
@@ -57,10 +59,12 @@ export default function Home() {
     });
 
     // First load from local IndexedDB for faster initial render
-    db.getComicsData().then((localData) => {
+    localCatalog().then((localData) => {
       if (localData) {
         showData(localData);
       }
+
+      if (isOfflineReading()) { if (!localData) showData([]); return; }
 
       // Then fetch fresh data from remote in the background
       db.updateFromRemoteDB().then((freshData) => {

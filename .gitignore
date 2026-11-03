@@ -46,3 +46,7 @@ next-env.d.ts
 
 # Generated ONNX worker/runtime assets (predev/prebuild)
 /public/upscale-runtime/
+
+# Generated offline app and service worker (postbuild)
+/public/offline/
+/public/sw.js

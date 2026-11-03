@@ -34,6 +34,41 @@ npm run build
 npm start
 ```
 
+## Offline reading / Home Screen apps
+
+Open the installed app online once and wait for **Offline reading ready** in
+the library or Storage. Download the comics you want to take offline. You can
+then close the app, disconnect, reopen it, and read those downloads, including
+comics whose reader page has never been visited. Bookmarks, notes, reading
+progress, themes, reader settings, and JSON backups work locally too.
+
+On iPhone/iPad, perform setup and downloads inside the installed Home Screen
+app; its storage may be separate from a Safari tab. Browser storage still needs
+space and can be cleared by the user or browser. Storage has a **Request
+persistent storage** button. Catalog refreshes, new comic/model downloads,
+and server transfer codes require a connection. GPU upscaling also needs its
+runtime loaded online; basic reading and border cropping work fully offline.
+
+Deploy with **`npm run build`** (including its `postbuild` lifecycle), then
+`npm start` or Vercel. Offline support requires HTTPS, or localhost for testing;
+it intentionally does not register a worker in `next dev`.
+
+The build generates a small standalone React interface using the same reader
+and library components. A versioned service worker caches that interface,
+styles, fonts, and icons, and serves it on failed document navigations. This
+avoids requiring Next server navigation responses for unvisited comic URLs.
+Comic archives remain in their existing IndexedDB/OPFS stores. Processed pages
+are not persisted. Updates install a complete new interface before activation,
+wait for existing tabs to close, and remove only older app-interface caches.
+Missing interface assets are repaired on the next online launch.
+
+Production offline tests (build first):
+`npx playwright test --config playwright.offline.config.ts --project=chromium --project=firefox`.
+Add `--project=webkit` on a host with Playwright WebKit's system dependencies.
+Tests cut off service-worker network requests as well as page requests, and
+cover unvisited downloads, both archive stores, saved progress/bookmarks/options,
+missing catalog entries, cache repair, and a full browser restart.
+
 ## Browser upscaling
 
 Choose a model in **View options → Upscaling**, then click **Render from here** in
