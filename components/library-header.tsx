@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { Bookmark, BookOpen, Database } from "lucide-react"
+import { ArrowLeftRight, Bookmark, BookOpen, Database } from "lucide-react"
 import { ThemeSwitcher } from "@/components/theme-controls"
 
 interface Crumb {
@@ -95,6 +95,7 @@ export function LibraryHeader({ path = [], onNavigate }: LibraryHeaderProps) {
         >
           <Database aria-hidden="true" className="size-[18px]" strokeWidth={1.8} />
         </Link>
+        <Link href="/backup" aria-label="Backup & transfer" title="Backup & transfer" className="flex size-11 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"><ArrowLeftRight aria-hidden="true" className="size-[18px]" strokeWidth={1.8} /></Link>
         <ThemeSwitcher />
       </div>
     </header>

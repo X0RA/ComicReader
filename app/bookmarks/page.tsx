@@ -28,6 +28,7 @@ export default function BookmarksPage() {
     <section aria-labelledby="bookmarks-title">
       <h1 id="bookmarks-title" className="text-[32px] font-semibold tracking-tight">Bookmarks</h1>
       <p className="mt-1 text-sm text-muted-foreground">{loading ? "Loading bookmarks…" : `${bookmarks.length} saved ${bookmarks.length === 1 ? "page" : "pages"} across ${comics.length} ${comics.length === 1 ? "comic" : "comics"}`}</p>
+      <Link href="/backup" className="mt-3 inline-flex min-h-11 items-center text-sm text-primary hover:underline">Back up or transfer bookmarks & settings →</Link>
       {error && <p role="alert" className="mt-5 text-sm text-destructive">{error}</p>}
       {!loading && !error && !bookmarks.length && <div className="mt-8 rounded-2xl border bg-card px-5 py-12 text-center">
         <Bookmark className="mx-auto mb-4 text-muted-foreground" size={28} /><h2 className="font-medium">Keep a page worth returning to</h2>

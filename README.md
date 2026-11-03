@@ -51,3 +51,41 @@ hardware. One job is the default; more jobs may be slower on some devices.
 Model artifacts, licenses, runtime/build details and GPU test instructions are
 documented in [public/upscale-models/README.md](public/upscale-models/README.md).
 AnimeSharp V3 carries a non-commercial license.
+
+## Backups and device transfers
+
+Open **Backup & transfer** from the library header, Storage, or Bookmarks.
+It exports reader/upscaling settings, theme, bookmarks and their notes, reading
+progress, and the last-opened comic/folder. Comic archives, catalog data, model
+weights and rendered images are excluded.
+
+- **JSON:** download or import a versioned backup file (up to 10 MiB).
+- **Import link:** compressed, URL-safe Base64 data in `/import#...`. Opening it
+  imports automatically, then removes the payload from the address bar. The
+  fragment is not sent in HTTP requests. `/import/<payload>` is also supported
+  for shorter links, but request-length limits apply to that form. Links are
+  capped at 128,000 payload characters; larger backups should use JSON files.
+- **Temporary code (experimental):** create a code, then enter it on another
+  device's Backup & transfer page on the same site. Data is held only in server
+  process memory, expires after ten minutes, and may disappear earlier. Anyone
+  with the code can read it until expiry. No storage service or account is needed.
+
+Imports add missing bookmarks using `(comicId, page)` as the identity. Existing
+bookmarks, including their notes, win on duplicates. Reading progress keeps the
+furthest page and completed status; navigation keeps the newer timestamp.
+Settings/theme are replaced by the imported settings. Imports validate the whole
+backup before writing, and bookmarks/progress/navigation merge in one IndexedDB
+transaction. Re-importing a backup does not duplicate bookmarks.
+
+The code API uses a single Node route, `POST /api/transfer`, for creation and
+retrieval. A process-local cache is shared across requests to that warm instance
+only. Vercel can route another request to a different instance or restart it;
+there is **no guarantee** a valid code will be found, even before expiry. Use
+JSON or a self-contained link when that happens. A durable shared store would
+be required to guarantee cross-instance retrieval. Responses are `no-store`;
+entries, bytes, request bodies and per-client attempts are bounded. Payloads
+are not logged by application code. Creating a new code does not renew an old
+one, and retrieval does not extend expiry.
+
+Validation: `npx playwright test e2e/backups.spec.ts --project=chromium --project=firefox`
+and `node --test lib/transfer-cache.test.mjs`.

@@ -2,19 +2,19 @@ import Dexie, { Table } from "dexie";
 import { ContentItem, File, Folder } from "./types";
 
 // Define interfaces for database tables
-interface ReadComic {
+export interface ReadComic {
   id: string;
   status: "in_progress" | "completed" | "unread";
   lastPage: number;
   totalPages: number;
 }
 
-interface LastRead {
+export interface LastRead {
   id: string;
   timestamp: number;
 }
 
-interface LastFolder {
+export interface LastFolder {
   id: string;
   timestamp: number;
 }

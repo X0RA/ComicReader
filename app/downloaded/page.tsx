@@ -83,6 +83,7 @@ export default function DownloadedPage() {
         </nav>
         <ThemeSwitcher />
       </header>
+      <Link href="/backup" className="text-sm text-primary hover:underline">Back up or transfer settings, bookmarks & progress →</Link>
       <section aria-labelledby="downloads-title">
         <div className="mb-5 flex flex-wrap items-end justify-between gap-5">
           <div><h1 id="downloads-title" className="text-[32px] font-semibold tracking-tight">Downloaded</h1>
