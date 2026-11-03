@@ -29,6 +29,24 @@
 /* Keep panning for zoomed pages, without flashing scrollbars during page turns. */
 .viewport { scrollbar-width: none; }
 .viewport::-webkit-scrollbar { display: none; }
+
+/* Desktop controls follow their own hover regions, independently of page turns.
+ * The bottom strip joins the toolbar so moving up into it never loses hover.
+ * Only keyboard focus keeps a control visible after the pointer leaves.
+ */
+.desktopControls {
+  position: fixed;
+  inset: auto 0 0;
+  height: 64px;
+  z-index: 30;
+}
+.desktopControls > nav { opacity: 0; }
+.desktopControls:hover > nav:not([inert]),
+.desktopControls > nav:has(:focus-visible) { opacity: 1; }
+.desktopTurn { pointer-events: auto; opacity: 0; transition: opacity 200ms; }
+.desktopTurn:hover, .desktopTurn:has(:focus-visible) { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .desktopTurn { transition: none; } }
+
 .loadingBook { animation: reader-breathe 1.8s ease-in-out infinite; }
 .loadingTrack { animation: reader-loading 1.4s ease-in-out infinite; }
 @keyframes reader-breathe { 50% { opacity: .55; transform: translateY(-2px); } }

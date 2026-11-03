@@ -16,6 +16,7 @@ import ComicView, { type ComicViewHandle } from "./_comicView";
 import ComicOverlay, { ReaderIconButton } from "./_comicOverlay";
 import ViewOptions from "./_viewOptions";
 import ReaderLoading from "./_readerLoading";
+import styles from "./reader.module.css";
 
 // Serialize progress writes so a slower older IndexedDB write cannot win a page turn.
 let progressWrites = Promise.resolve();
@@ -39,7 +40,6 @@ function Reader({ id, chapter, pages, initialPage, warning }: { id: string; chap
   const view = useRef<ComicViewHandle>(null);
   const idle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const manuallyHidden = useRef(false);
-  const mouseAtBottom = useRef(false);
   const navigating = useRef(false);
   const started = useRef(0);
   const complete = useRef(false);
@@ -55,34 +55,26 @@ function Reader({ id, chapter, pages, initialPage, warning }: { id: string; chap
   latest.current = { page, lastPage };
 
   const activity = useCallback(() => {
-    if (manuallyHidden.current) return;
+    // Desktop visibility belongs to hover/focus regions, never page activity.
+    if (!viewport.phone || manuallyHidden.current) return;
     clearTimeout(idle.current);
     setControls(true);
     idle.current = setTimeout(() => {
       // Keyboard users retain their focused controls until they move away.
       if (!document.activeElement?.closest('nav[aria-label="Reader controls"]')) setControls(false);
     }, 4500);
-  }, []);
+  }, [viewport.phone]);
   const hideControls = useCallback(() => {
     manuallyHidden.current = true;
-    // Require leaving the bottom edge before returning, so clicking X stays dismissed.
-    mouseAtBottom.current = true;
     clearTimeout(idle.current);
     setControls(false);
   }, []);
-  useEffect(() => {
-    const revealAtEdge = (event: PointerEvent) => {
-      if (event.pointerType !== "mouse" || viewport.phone || panel) return;
-      const atBottom = event.clientY >= window.innerHeight - 64;
-      if (atBottom && !mouseAtBottom.current) {
-        manuallyHidden.current = false;
-        activity();
-      }
-      mouseAtBottom.current = atBottom;
-    };
-    window.addEventListener("pointermove", revealAtEdge);
-    return () => window.removeEventListener("pointermove", revealAtEdge);
-  }, [activity, viewport.phone, panel]);
+  const resetDesktopControls = () => {
+    if (viewport.phone) return;
+    // X/Escape dismisses the current hover; a fresh entry can reveal it again.
+    manuallyHidden.current = false;
+    setControls(true);
+  };
   useEffect(() => { started.current = performance.now(); activity(); return () => clearTimeout(idle.current); }, [activity]);
   useEffect(() => { if (panel) { manuallyHidden.current = false; clearTimeout(idle.current); setControls(true); } else activity(); }, [panel, activity]);
   useEffect(() => { setAutoPaused(false); }, [settings.autoScroll]);
@@ -176,14 +168,20 @@ function Reader({ id, chapter, pages, initialPage, warning }: { id: string; chap
     </header>
     <div className="absolute inset-x-0 top-[60px] bottom-0">
       {ready && <ComicView ref={view} pages={pages} settings={settings} layout={layout} visiblePages={visiblePages} currentPage={currentPage} width={viewport.width} height={viewport.height} phone={viewport.phone} panelOpen={panel} turnDirection={turnDirection} onPage={setCurrentPage}
-        onScrollDirection={direction => { if (direction < 0) activity(); else if (!panel) setControls(false); }} onTap={onTap} onTurn={turn} onEnd={atEnd} autoRunning={settings.autoScroll > 0 && !autoPaused} />}
+        onScrollDirection={direction => { if (!viewport.phone) return; if (direction < 0) activity(); else if (!panel) setControls(false); }} onTap={onTap} onTurn={turn} onEnd={atEnd} autoRunning={settings.autoScroll > 0 && !autoPaused} />}
     </div>
     {(progressError || (warning && !dismissWarning)) && <div role="status" className="fixed inset-x-3 top-[72px] z-30 mx-auto flex max-w-lg items-center gap-3 rounded-xl border bg-card p-3 text-xs shadow-lg"><span className="flex-1">{progressError ? "Reading progress could not be saved. Browser storage may be full." : warning}</span>{!progressError && <button type="button" onClick={() => setDismissWarning(true)} className="min-h-11 px-2 text-primary">Dismiss</button>}</div>}
-    {paged && controls && !panel && <div className="pointer-events-none fixed inset-x-3 top-1/2 z-20 hidden justify-between sm:flex">
-      <ReaderIconButton label={rtl ? "Next page" : "Previous page"} disabled={rtl ? !canNext : !canPrevious} onClick={() => turn(rtl ? 1 : -1)} className="pointer-events-auto rounded-full bg-card/80 text-foreground shadow-lg backdrop-blur"><ChevronLeft size={20} /></ReaderIconButton>
-      <ReaderIconButton label={rtl ? "Previous page" : "Next page"} disabled={rtl ? !canPrevious : !canNext} onClick={() => turn(rtl ? -1 : 1)} className="pointer-events-auto rounded-full bg-card/80 text-foreground shadow-lg backdrop-blur"><ChevronRight size={20} /></ReaderIconButton>
+    {paged && (!viewport.phone || controls) && !panel && <div className="pointer-events-none fixed inset-x-3 top-1/2 z-20 hidden justify-between sm:flex">
+      <div className={viewport.phone ? "pointer-events-auto" : styles.desktopTurn}>
+        <ReaderIconButton label={rtl ? "Next page" : "Previous page"} disabled={rtl ? !canNext : !canPrevious} onClick={() => turn(rtl ? 1 : -1)} className="pointer-events-auto rounded-full bg-card/80 text-foreground shadow-lg backdrop-blur"><ChevronLeft size={20} /></ReaderIconButton>
+      </div>
+      <div className={viewport.phone ? "pointer-events-auto" : styles.desktopTurn}>
+        <ReaderIconButton label={rtl ? "Previous page" : "Next page"} disabled={rtl ? !canPrevious : !canNext} onClick={() => turn(rtl ? -1 : 1)} className="pointer-events-auto rounded-full bg-card/80 text-foreground shadow-lg backdrop-blur"><ChevronRight size={20} /></ReaderIconButton>
+      </div>
     </div>}
-    <ComicOverlay visible={controls && !panel} page={page} lastVisiblePage={lastPage} total={pages.length} paged={paged} rtl={rtl} previousChapter={!!chapter.previous} nextChapter={!!chapter.next} canPrevious={canPrevious} canNext={canNext} jump={jump} turn={turn} chapter={chapterNavigation} hide={hideControls} activity={activity} autoScroll={settings.autoScroll} autoPaused={autoPaused} toggleAuto={() => { setAutoPaused(value => !value); activity(); }} />
+    <div hidden={panel} className={viewport.phone ? undefined : styles.desktopControls} onPointerEnter={resetDesktopControls} onPointerLeave={resetDesktopControls}>
+      <ComicOverlay visible={controls && !panel} page={page} lastVisiblePage={lastPage} total={pages.length} paged={paged} rtl={rtl} previousChapter={!!chapter.previous} nextChapter={!!chapter.next} canPrevious={canPrevious} canNext={canNext} jump={jump} turn={turn} chapter={chapterNavigation} hide={hideControls} activity={activity} autoScroll={settings.autoScroll} autoPaused={autoPaused} toggleAuto={() => { setAutoPaused(value => !value); activity(); }} />
+    </div>
     <p className="sr-only" aria-live="polite" aria-atomic="true">Page {page}{lastPage > page ? ` to ${lastPage}` : ""} of {pages.length}</p>
     {panel && <>
       {settings.tapZones !== "off" && <div aria-hidden="true" className={`pointer-events-none fixed inset-x-0 top-[60px] bottom-0 z-40 grid ${settings.tapZones === "sides" ? "grid-cols-3" : "grid-rows-3"}`}>
