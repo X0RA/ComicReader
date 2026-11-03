@@ -16,6 +16,7 @@ import ComicView, { type ComicViewHandle } from "./_comicView";
 import ComicOverlay, { ReaderIconButton } from "./_comicOverlay";
 import ViewOptions from "./_viewOptions";
 import ReaderLoading from "./_readerLoading";
+import PreparationProgress from "./_preparationProgress";
 import styles from "./reader.module.css";
 
 // Serialize progress writes so a slower older IndexedDB write cannot win a page turn.
@@ -27,7 +28,10 @@ function saveProgress(id: string, page: number, total: number, completed: boolea
 }
 function comicTitle(name: string) { return parseComicName(name).title; }
 
-function Reader({ id, chapter, pages, initialPage, warning }: { id: string; chapter: ReaderChapter; pages: ReaderPage[]; initialPage: number; warning?: string }) {
+function Reader({ id, chapter, pages, initialPage, prepared, preparing, prioritize, warning }: {
+  id: string; chapter: ReaderChapter; pages: ReaderPage[]; initialPage: number; prepared: number; preparing: boolean;
+  prioritize: (page: number) => void; warning?: string;
+}) {
   const router = useRouter();
   const { settings, change, reset, ready, viewport, storageError } = useReaderSettings();
   const [currentPage, setCurrentPage] = useState(initialPage);
@@ -46,13 +50,22 @@ function Reader({ id, chapter, pages, initialPage, warning }: { id: string; chap
   const wakeStatus = useReaderWakeLock(ready && settings.keepAwake);
   const layout = effectiveReaderLayout(settings, viewport.width > viewport.height);
   const paged = layout !== "webtoon";
-  const groups = useMemo(() => layout === "spread" ? pairReaderPages(pages, settings.coverAlone, settings.wideAlone) : pages.map((_, index) => [index + 1]), [layout, pages, settings.coverAlone, settings.wideAlone]);
+  const spreadPolicy = `${layout}:${settings.coverAlone}:${settings.wideAlone}`;
+  const spreadAnchor = useRef<{ policy: string; pages: number[] } | undefined>(undefined);
+  const groups = useMemo(() => {
+    const anchor = spreadAnchor.current;
+    const keep = anchor?.policy === spreadPolicy && anchor.pages.includes(currentPage) ? anchor.pages : undefined;
+    return layout === "spread" ? pairReaderPages(pages, settings.coverAlone, settings.wideAlone, keep) : pages.map((_, index) => [index + 1]);
+  }, [layout, pages, settings.coverAlone, settings.wideAlone, spreadPolicy, currentPage]);
   const groupIndex = Math.max(0, groups.findIndex(group => group.includes(currentPage)));
   const visiblePages = groups[groupIndex];
+  spreadAnchor.current = { policy: spreadPolicy, pages: visiblePages };
   const page = visiblePages[0];
   const lastPage = visiblePages[visiblePages.length - 1];
+  const visibleReady = !visiblePages.some(number => pages[number - 1].status === "pending");
   const latest = useRef({ page, lastPage });
   latest.current = { page, lastPage };
+  useEffect(() => { prioritize(currentPage); }, [currentPage, prioritize]);
 
   const activity = useCallback(() => {
     // Desktop visibility belongs to hover/focus regions, never page activity.
@@ -88,19 +101,22 @@ function Reader({ id, chapter, pages, initialPage, warning }: { id: string; chap
   const atEnd = useCallback(() => {
     // Do not auto-advance merely because a restored page is already at the end.
     if (panel || performance.now() - started.current < 1000) return;
+    if (pages[pages.length - 1].status === "pending") { prioritize(pages.length); return; }
     complete.current = true;
     latest.current = { page: pages.length, lastPage: pages.length };
     setCurrentPage(pages.length);
     if (settings.autoAdvance && chapter.next) chapterNavigation(1);
     else if (settings.autoScroll > 0) { setAutoPaused(true); activity(); }
-  }, [panel, settings.autoAdvance, settings.autoScroll, chapter.next, chapterNavigation, activity, pages.length]);
+  }, [panel, settings.autoAdvance, settings.autoScroll, chapter.next, chapterNavigation, activity, pages, prioritize]);
   const jump = useCallback((target: number) => {
     const next = Math.min(pages.length, Math.max(1, target));
+    spreadAnchor.current = { policy: spreadPolicy, pages: groups.find(group => group.includes(next)) ?? [next] };
+    prioritize(next);
     setTurnDirection(next >= currentPage ? 1 : -1);
     setCurrentPage(next);
     view.current?.jump(next, !paged && next === pages.length);
     activity();
-  }, [pages.length, currentPage, paged, activity]);
+  }, [pages.length, currentPage, paged, activity, groups, spreadPolicy, prioritize]);
   const turn = useCallback((direction: number) => {
     if (direction > 0 && groupIndex === groups.length - 1) { if (settings.autoAdvance) chapterNavigation(1); return; }
     const next = groups[groupIndex + direction];
@@ -118,12 +134,13 @@ function Reader({ id, chapter, pages, initialPage, warning }: { id: string; chap
 
   useEffect(() => {
     if (!ready) return;
+    if (!visibleReady) return;
     if (lastPage === pages.length) complete.current = true;
     const timer = setTimeout(() => {
       void saveProgress(id, page, pages.length, complete.current).then(() => setProgressError(false)).catch(() => setProgressError(true));
     }, 250);
     return () => clearTimeout(timer);
-  }, [id, page, lastPage, pages.length, ready]);
+  }, [id, page, lastPage, pages.length, visibleReady, ready]);
   useEffect(() => {
     const flush = () => { void saveProgress(id, latest.current.page, pages.length, complete.current).catch(() => {}); };
     const visibility = () => { if (document.visibilityState === "hidden") flush(); };
@@ -163,12 +180,13 @@ function Reader({ id, chapter, pages, initialPage, warning }: { id: string; chap
     <header className="absolute inset-x-0 top-0 z-30 flex h-[60px] items-center gap-1 border-b bg-background/90 px-1 backdrop-blur-xl sm:gap-3 sm:px-4">
       <ReaderIconButton label="Back to library folder" onClick={back}><ChevronLeft size={19} /></ReaderIconButton>
       <h1 title={chapter.comic.name} className="min-w-0 flex-1 truncate text-[15px] font-medium">{comicTitle(chapter.comic.name)}</h1>
+      {preparing && <PreparationProgress prepared={prepared} total={pages.length} />}
       <button type="button" onClick={() => setPanel(true)} aria-label="View options" aria-haspopup="dialog" aria-expanded={panel} className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-muted-foreground hover:bg-secondary focus-visible:outline-2 focus-visible:outline-ring ${panel ? "bg-secondary text-foreground" : ""}`}><SlidersHorizontal size={19} /></button>
       <ThemeSwitcher />
     </header>
     <div className="absolute inset-x-0 top-[60px] bottom-0">
       {ready && <ComicView ref={view} pages={pages} settings={settings} layout={layout} visiblePages={visiblePages} currentPage={currentPage} width={viewport.width} height={viewport.height} phone={viewport.phone} panelOpen={panel} turnDirection={turnDirection} onPage={setCurrentPage}
-        onScrollDirection={direction => { if (!viewport.phone) return; if (direction < 0) activity(); else if (!panel) setControls(false); }} onTap={onTap} onTurn={turn} onEnd={atEnd} autoRunning={settings.autoScroll > 0 && !autoPaused} />}
+        onScrollDirection={direction => { if (!viewport.phone) return; if (direction < 0) activity(); else if (!panel) setControls(false); }} onTap={onTap} onTurn={turn} onEnd={atEnd} autoRunning={settings.autoScroll > 0 && !autoPaused && pages[currentPage - 1].status !== "pending"} />}
     </div>
     {(progressError || (warning && !dismissWarning)) && <div role="status" className="fixed inset-x-3 top-[72px] z-30 mx-auto flex max-w-lg items-center gap-3 rounded-xl border bg-card p-3 text-xs shadow-lg"><span className="flex-1">{progressError ? "Reading progress could not be saved. Browser storage may be full." : warning}</span>{!progressError && <button type="button" onClick={() => setDismissWarning(true)} className="min-h-11 px-2 text-primary">Dismiss</button>}</div>}
     {paged && (!viewport.phone || controls) && !panel && <div className="pointer-events-none fixed inset-x-3 top-1/2 z-20 hidden justify-between sm:flex">
@@ -202,5 +220,5 @@ export default function ReadFilePage({ params }: { params: Promise<{ id: string 
       {comic.error ? <><h2 className="text-lg font-medium">Couldn’t open this comic</h2><p role="alert" className="max-w-md text-sm text-muted-foreground">{comic.error}</p><button type="button" onClick={() => setRetry(value => value + 1)} className="min-h-11 rounded-xl bg-primary px-5 text-sm font-medium text-primary-foreground">Try again</button></> : <ReaderLoading phase={comic.phase} progress={comic.progress} />}
     </div>
   </main>;
-  return <Reader key={`${id}-${retry}`} id={id} chapter={comic.chapter} pages={comic.pages} initialPage={comic.initialPage} warning={comic.warning} />;
+  return <Reader key={`${id}-${retry}`} id={id} chapter={comic.chapter} pages={comic.pages} initialPage={comic.initialPage} prepared={comic.prepared} preparing={comic.preparing} prioritize={comic.prioritize} warning={comic.warning} />;
 }

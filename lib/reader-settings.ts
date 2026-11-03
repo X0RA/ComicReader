@@ -45,7 +45,7 @@ const choices = {
   wheel: ["scroll", "turn"], transition: ["none", "slide", "fade"],
   background: ["black", "grey", "white"],
 };
-const ranges = { maxWidth: [400, 1200], spineGap: [0, 24], zoom: [50, 200], cropTightness: [0, 100], autoScroll: [0, 10], brightness: [20, 100], warmth: [0, 100] };
+const ranges = { maxWidth: [400, 1200], spineGap: [0, 24], zoom: [50, 200], cropTightness: [0, 500], autoScroll: [0, 10], brightness: [20, 100], warmth: [0, 100] };
 
 /** Only known, correctly typed values enter rendering or CSS; old/partial settings are safe. */
 export function parseReaderSettings(raw: string | null, phone: boolean): ReaderSettings {

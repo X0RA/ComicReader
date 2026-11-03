@@ -1,12 +1,26 @@
 export interface PageSize { width: number; height: number }
 export interface CropBounds { left: number; top: number; right: number; bottom: number }
-export interface ReaderPage extends PageSize { url: string; name: string; crop: CropBounds; tightCrop: CropBounds }
+export interface ReaderPage extends PageSize {
+  url: string; name: string; crop: CropBounds; tightCrop: CropBounds;
+  // Unprepared and unreadable slots retain their archive page number.
+  status?: "pending" | "error";
+}
 export const FULL_PAGE: CropBounds = { left: 0, top: 0, right: 1, bottom: 1 };
 
-/** Interpolate prepared bounds, so adjusting tightness never triggers image work. */
+/** Interpolate prepared bounds through 100%, then add manual inset up to 10%
+ * of the detected area per edge at 500%. No image work runs while adjusting.
+ */
 export function readerCropBounds(page: ReaderPage, enabled: boolean, tightness: number): CropBounds {
   if (!enabled) return FULL_PAGE;
-  const amount = Number.isFinite(tightness) ? Math.max(0, Math.min(100, tightness)) / 100 : 0;
+  const value = Number.isFinite(tightness) ? Math.max(0, Math.min(500, tightness)) : 0;
+  if (value > 100) {
+    const bounds = page.tightCrop;
+    const inset = (value - 100) / 4000;
+    const x = (bounds.right - bounds.left) * inset;
+    const y = (bounds.bottom - bounds.top) * inset;
+    return { left: bounds.left + x, top: bounds.top + y, right: bounds.right - x, bottom: bounds.bottom - y };
+  }
+  const amount = value / 100;
   const blend = (key: keyof CropBounds) => page.crop[key] + (page.tightCrop[key] - page.crop[key]) * amount;
   return { left: blend("left"), top: blend("top"), right: blend("right"), bottom: blend("bottom") };
 }
@@ -16,7 +30,16 @@ export function croppedPageSize(page: PageSize, bounds: CropBounds): PageSize {
 }
 
 /** Page numbers are one-based throughout navigation and persisted progress. */
-export function pairReaderPages(pages: readonly PageSize[], coverAlone: boolean, wideAlone: boolean): number[][] {
+export function pairReaderPages(pages: readonly PageSize[], coverAlone: boolean, wideAlone: boolean, keep?: readonly number[]): number[][] {
+  // Discovering a wide page elsewhere must not rearrange the visible spread.
+  if (keep?.length && keep[0] >= 1 && keep.at(-1)! <= pages.length) {
+    const start = keep[0] - 1, end = keep.at(-1)!;
+    return [
+      ...pairReaderPages(pages.slice(0, start), coverAlone, wideAlone),
+      ...pairReaderPages(pages.slice(start, end), coverAlone && start === 0, wideAlone).map(group => group.map(number => number + start)),
+      ...pairReaderPages(pages.slice(end), false, wideAlone).map(group => group.map(number => number + end)),
+    ];
+  }
   const spreads: number[][] = [];
   let pending: number[] = [];
   pages.forEach((page, index) => {

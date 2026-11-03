@@ -82,14 +82,18 @@ test('tightness changes prepared geometry without image analysis or a page-turn 
       const pages = [prepared, { ...prepared, url: prepared.url + '#second' }];
       const render = (tightness: number, visiblePages = [1]) => window.readerTest.render(pages, visiblePages, true, 'single', { cropTightness: tightness });
       const conservative = render(0), middle = render(50), tight = render(100);
-      const turned = render(100, [2]);
-      const off = window.readerTest.render(pages, [2], false, 'single', { cropTightness: 100 });
-      return { conservative, middle, tight, turned, off, reads };
+      const extra = render(250), maximum = render(500);
+      const turned = render(500, [2]);
+      const off = window.readerTest.render(pages, [2], false, 'single', { cropTightness: 500 });
+      return { conservative, middle, tight, extra, maximum, turned, off, reads };
     } finally { Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', { configurable: true, value: original }); }
   });
   expect(result.tight[0].width).toBeLessThan(result.middle[0].width);
   expect(result.middle[0].width).toBeLessThan(result.conservative[0].width);
-  expect(result.turned).toEqual(result.tight);
+  expect(result.extra[0].width).toBeLessThan(result.tight[0].width);
+  expect(result.maximum[0].width).toBeCloseTo(result.tight[0].width * .8, 2);
+  expect(result.maximum[0].height).toBeCloseTo(result.tight[0].height * .8, 2);
+  expect(result.turned).toEqual(result.maximum);
   expect(result.off).toEqual([{ left: 0, top: 0, width: 100, height: 100 }]);
   expect(result.reads).toBe(0);
 });

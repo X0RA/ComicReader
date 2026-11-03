@@ -62,6 +62,7 @@ const ComicView = forwardRef<ComicViewHandle, Props>(function ComicView({ pages,
   }, []);
   const pointerStart = useRef<{ x: number; y: number; time: number; scroll: number } | null>(null);
   const lastScroll = useRef(0);
+  const scrollAnchor = useRef({ page: currentPage, offset: 0 });
   const currentRef = useRef(currentPage);
   currentRef.current = currentPage;
   const callbacks = useRef({ onPage, onScrollDirection, onTurn, onEnd, panelOpen });
@@ -77,6 +78,7 @@ const ComicView = forwardRef<ComicViewHandle, Props>(function ComicView({ pages,
     if (target) {
       root.scrollTop = bottom ? root.scrollHeight : target.offsetTop - 16;
       lastScroll.current = root.scrollTop;
+      scrollAnchor.current = { page, offset: root.scrollTop - target.offsetTop };
     }
   }, [paged]);
   useImperativeHandle(forwardedRef, () => ({
@@ -88,6 +90,20 @@ const ComicView = forwardRef<ComicViewHandle, Props>(function ComicView({ pages,
   useLayoutEffect(() => { jump(currentRef.current); }, [jump, stageWidth, height, settings.maxWidth, settings.fit, settings.zoom, settings.noUpscale, settings.gap, settings.crop, settings.cropTightness]);
   const spreadKey = visiblePages.join("-");
   useLayoutEffect(() => { if (paged) jump(currentRef.current); }, [paged, spreadKey, jump]);
+  useLayoutEffect(() => {
+    if (paged) return;
+    const root = scrollRef.current;
+    const anchor = scrollAnchor.current;
+    const target = pageRefs.current.get(anchor.page);
+    if (root && target) {
+      // Background pages can replace estimated heights above the reader.
+      // Preserve the position within the page, rather than jumping as they arrive.
+      const unhandledScroll = root.scrollTop - lastScroll.current;
+      root.scrollTop = target.offsetTop + anchor.offset + unhandledScroll;
+      scrollAnchor.current = { page: anchor.page, offset: root.scrollTop - target.offsetTop };
+      lastScroll.current = root.scrollTop;
+    }
+  }, [pages, paged]);
 
   useEffect(() => {
     const root = scrollRef.current;
@@ -108,6 +124,8 @@ const ComicView = forwardRef<ComicViewHandle, Props>(function ComicView({ pages,
           if (element.offsetTop <= probe) page = number;
           else break;
         }
+        const target = pageRefs.current.get(page);
+        if (target) scrollAnchor.current = { page, offset: root.scrollTop - target.offsetTop };
         callbacks.current.onPage(page);
         if (delta > 3 && root.scrollTop + root.clientHeight >= root.scrollHeight - 2 && !callbacks.current.panelOpen) callbacks.current.onEnd();
       });
@@ -173,13 +191,18 @@ const ComicView = forwardRef<ComicViewHandle, Props>(function ComicView({ pages,
     return size.width / size.height;
   };
   const ratios = visiblePages.reduce((sum, number) => sum + pageRatio(pages[number - 1]), 0);
+  const spreadPending = paged && visiblePages.some(number => pages[number - 1].status === "pending");
   return <div ref={scrollRef} role="region" aria-label="Comic pages" tabIndex={0} onPointerDown={pointerDown} onPointerUp={pointerUp} onPointerCancel={() => { pointerStart.current = null; }} className={`${styles.viewport} absolute inset-0 overflow-auto overscroll-contain focus-visible:outline-2 focus-visible:outline-ring`} style={{ overflowAnchor: "none", backgroundColor: { black: "#09090a", grey: "#3a3a3f", white: "#f4f3ef" }[settings.background] }}>
     <div key={paged ? spreadKey : "webtoon"} className={`${paged ? `flex w-max min-w-full items-start justify-center px-0 py-4 ${styles.page} ${styles[settings.transition] ?? ""}` : "relative flex w-max min-w-full flex-col items-center"}`} style={{ paddingLeft: paged && !phone ? 72 : 0, paddingRight: paged && !phone ? 72 : 0, gap: paged ? settings.spineGap : settings.gap ? 12 : 0, "--reader-slide": `${turnDirection * (settings.direction === "rtl" ? -1 : 1) * 24}px` } as CSSProperties}>
       {indices.map(number => {
         const page = pages[number - 1];
         const pageWidth = paged ? (availableWidth - settings.spineGap * (visiblePages.length - 1)) * pageRatio(page) / ratios : Math.min(stageWidth, settings.maxWidth);
-        return <div key={page.url} data-reader-page={number} ref={element => { if (element) pageRefs.current.set(number, element); else pageRefs.current.delete(number); }} className="relative shrink-0">
-          <PageImage page={page} number={number} settings={settings} availableWidth={pageWidth} availableHeight={availableHeight} eager={paged || Math.abs(number - currentPage) < 3} />
+        const placeholderWidth = readerPageWidth(page, settings.fit, pageWidth, availableHeight, settings.zoom, settings.noUpscale);
+        return <div key={page.name} data-reader-page={number} ref={element => { if (element) pageRefs.current.set(number, element); else pageRefs.current.delete(number); }} className="relative shrink-0">
+          {page.status || spreadPending ? <div aria-label={`Page ${number}`} aria-busy={page.status === "pending" || spreadPending}
+            className="flex items-center justify-center bg-background/60 text-sm text-muted-foreground" style={{ width: placeholderWidth, height: placeholderWidth * page.height / page.width }}>
+            {page.status === "error" ? "This page could not be read." : "Preparing page…"}
+          </div> : <PageImage page={page} number={number} settings={settings} availableWidth={pageWidth} availableHeight={availableHeight} eager={paged || Math.abs(number - currentPage) < 3} />}
         </div>;
       })}
     </div>
