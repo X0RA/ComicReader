@@ -4,6 +4,7 @@ export interface UpscaleSettings {
   upscaleScale: "2" | "3" | "4";
   upscaleDenoise: "conservative" | "none" | "denoise3x";
   upscaleJobs: number;
+  upscaleAhead: number;
 }
 export interface UpscaleModel {
   id: string; label: string; url: string; bytes: number; sha256: string; scale: number; multiple: number;

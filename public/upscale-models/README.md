@@ -26,7 +26,7 @@ The runtime is ONNX Runtime Web 1.27.0 (MIT), built from the pinned npm dependen
 `npm run dev` and `npm run build` generate `/upscale-runtime/` locally, including
 its WASM modules and license. Deploy both public directories as static assets.
 
-The queue keeps up to eight pages ahead and two behind, within a conservative
+The queue keeps up to the configured 0–32 pages ahead (default 8) and two behind, within a conservative
 memory estimate (384 MiB on phones; 768 MiB on desktop). It uses 256-pixel cores
 with 16-pixel overlap and reflected edge padding. Output is lossless PNG at native
 model scale; crop and logical layout continue to use original page dimensions.

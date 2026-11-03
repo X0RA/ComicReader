@@ -14,7 +14,7 @@ export default function UpscaleControls({ upscaling: u }: { upscaling: Upscaling
   }, [open]);
   if (!model) return null;
   const idle = s.status === "idle" || s.status === "error";
-  const label = s.status === "loading" ? `Model ${Math.round(s.download * 100)}%` : s.status === "running" ? `Rendering ${s.active.length} ${s.active.length === 1 ? "page" : "pages"}` : s.status === "paused" ? "Render paused" : s.status === "waiting" ? "Render buffer ready" : s.status === "complete" ? "Render complete" : "Render from here";
+  const label = s.status === "loading" ? `Model ${Math.round(s.download * 100)}%` : s.status === "running" ? `Rendering ${s.active.length} ${s.active.length === 1 ? "page" : "pages"}` : s.status === "paused" ? "Render paused" : s.status === "waiting" ? s.memoryLimit ? "Render memory limit" : "Render buffer ready" : s.status === "complete" ? "Render complete" : "Render from here";
   const progress = s.status === "loading" ? s.download : s.active.length ? s.active.reduce((sum, item) => sum + item.progress, 0) / s.active.length : 1;
   return <div ref={root} className="relative shrink-0" onKeyDown={event => { if (event.key === "Escape" && open) { event.stopPropagation(); setOpen(false); root.current?.querySelector("button")?.focus(); } }}>
     <button type="button" title={label} aria-label={label} aria-expanded={open} onClick={() => { if (idle) u.start(); setOpen(value => idle || !value); }} className="relative flex h-11 items-center gap-2 overflow-hidden rounded-xl px-3 text-xs text-muted-foreground hover:bg-secondary focus-visible:outline-2 focus-visible:outline-ring">
@@ -27,6 +27,8 @@ export default function UpscaleControls({ upscaling: u }: { upscaling: Upscaling
       {s.status === "loading" && <><progress aria-label="Model download" value={s.download} max={1} className="h-2 w-full accent-primary" /><p className="text-xs text-muted-foreground">Loading and verifying the model, then preparing the GPU.</p></>}
       {s.active.map(item => <label key={item.page} className="block text-xs">Page {item.page} · {Math.round(item.progress * 100)}%<progress aria-label={`Rendering page ${item.page}`} value={item.progress} max={1} className="mt-1 h-2 w-full accent-primary" /></label>)}
       <p className="text-xs text-muted-foreground">{s.images.size} enhanced pages ready · {(s.bytes / 1024 ** 2).toFixed(0)} MB in memory{s.secondsPerPage ? ` · ~${s.secondsPerPage.toFixed(1)}s per page` : ""}</p>
+      {!idle && <p className="text-xs text-muted-foreground">{s.active.length} of up to {u.jobs} parallel jobs active.</p>}
+      {s.memoryLimit && <p role="status" className="text-xs leading-relaxed text-muted-foreground">The fixed {Math.round(s.memoryLimit / 1024 ** 2)} MiB app budget is limiting jobs or pre-rendered pages. It uses estimates of memory needed for models and images.</p>}
       {s.status === "paused" && s.active.length > 0 && <p className="text-xs text-muted-foreground">Active pages will finish. No new pages start until you resume.</p>}
       {s.status === "waiting" && <p className="text-xs text-muted-foreground">Rendering continues as you read forward, within the memory limit. Earlier uncached pages need a new start.</p>}
       {s.message && <p role="alert" className="text-xs leading-relaxed">{s.message}</p>}{s.warning && <p role="status" className="text-xs leading-relaxed text-muted-foreground">{s.warning}</p>}

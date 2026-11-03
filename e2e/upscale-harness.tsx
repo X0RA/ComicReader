@@ -6,7 +6,7 @@ import { BrowserUpscaleWorker, checkUpscaleSupport } from '../lib/upscale/client
 import { UPSCALE_MODELS } from '../lib/upscale/models';
 import { loadUpscaleModel, clearUpscaleModels, upscaleModelCacheSize, verifyModel, MODEL_CACHE } from '../lib/upscale/model-cache';
 import { upscaleTiles, reflectPixel } from '../lib/upscale/tiles';
-import { defaultReaderSettings, type ReaderSettings } from '../lib/reader-settings';
+import { defaultReaderSettings, parseReaderSettings, type ReaderSettings } from '../lib/reader-settings';
 import type { ReaderPage } from '../lib/reader-pages';
 import { useUpscaling, type Upscaling } from '../app/read/[id]/_useUpscaling';
 import UpscaleControls from '../app/read/[id]/_upscaleControls';
@@ -23,7 +23,7 @@ function Probe({ pages }: { pages: ReaderPage[] }) {
     <button onClick={() => setPage(p => Math.min(pages.length, p + 1))}>Next</button>
     <ComicView pages={pages} enhanced={u.state.images} settings={settings} layout="single" visiblePages={[page]} currentPage={page} width={1000} height={800} phone={false} panelOpen={false} turnDirection={1} onPage={setPage} onScrollDirection={() => {}} onTap={() => {}} onTurn={() => {}} onEnd={() => {}} autoRunning={false} /></>;
 }
-const upscaleTest = { UpscaleQueue, BrowserUpscaleWorker, checkUpscaleSupport, UPSCALE_MODELS, loadUpscaleModel, clearUpscaleModels, upscaleModelCacheSize, verifyModel, MODEL_CACHE, upscaleTiles, reflectPixel,
+const upscaleTest = { parseReaderSettings, UpscaleQueue, BrowserUpscaleWorker, checkUpscaleSupport, UPSCALE_MODELS, loadUpscaleModel, clearUpscaleModels, upscaleModelCacheSize, verifyModel, MODEL_CACHE, upscaleTiles, reflectPixel,
   get state() { return state; },
   mount(pages: ReaderPage[]) { flushSync(() => root.render(<Probe pages={pages} />)); },
   unmount() { flushSync(() => root.render(null)); },

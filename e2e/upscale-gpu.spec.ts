@@ -50,6 +50,7 @@ test('reader starts manually, runs parallel jobs, preserves geometry, and invali
   });
   await page.getByLabel('Upscaling model', { exact: true }).selectOption('anime4k');
   await page.getByLabel('Parallel jobs', { exact: true }).fill('2');
+  await page.getByLabel('Pages to render ahead', { exact: true }).fill('1');
   expect(modelRequests).toBe(0); expect(workers).toBe(0);
   const before = await page.getByAltText('Page 1', { exact: true }).evaluate(img => ({ style: img.getAttribute('style'), parent: img.parentElement!.getAttribute('style') }));
   await page.getByRole('button', { name: 'Render from here', exact: true }).click();
@@ -58,6 +59,13 @@ test('reader starts manually, runs parallel jobs, preserves geometry, and invali
   expect(modelRequests).toBe(1);
   const after = await page.getByAltText('Page 1', { exact: true }).evaluate(img => ({ style: img.getAttribute('style'), parent: img.parentElement!.getAttribute('style') }));
   expect(after).toEqual(before);
+  await expect.poll(() => page.evaluate(() => window.upscaleTest.state?.state.status)).toBe('waiting');
+  expect(await page.evaluate(() => window.upscaleTest.state?.state.images.size)).toBe(2);
+  await page.getByLabel('Pages to render ahead', { exact: true }).fill('4');
+  await expect.poll(() => page.evaluate(() => window.upscaleTest.state?.state.images.size), { timeout: 30_000 }).toBe(5);
+  await page.getByLabel('Pages to render ahead', { exact: true }).fill('0');
+  await expect.poll(() => page.evaluate(() => window.upscaleTest.state?.state.images.size)).toBe(1);
+  expect(workers).toBe(2); expect(modelRequests).toBe(1);
   await page.getByRole('button', { name: 'Pause', exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.upscaleTest.state?.state.status)).toBe('paused');
   await expect.poll(() => page.evaluate(() => window.upscaleTest.state?.state.active.length), { timeout: 30_000 }).toBe(0);

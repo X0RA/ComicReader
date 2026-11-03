@@ -158,3 +158,54 @@ test('leaving while an enhanced image decodes releases its URL instead of publis
   });
   expect(result).toEqual({released:1,images:0,status:'idle'});
 });
+
+test('render-ahead changes resize the live buffer without reloading or bypassing pause and stop', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const { UpscaleQueue, UPSCALE_MODELS } = window.upscaleTest;
+    const pages = Array.from({ length: 40 }, (_, i) => ({ url: String(i + 1), width: 100, height: 150 }) as ReaderPage);
+    let state!: UpscaleState, loads = 0; const rendered: number[] = [], released: number[] = [];
+    const tick = async () => { for (let i = 0; i < 100; i++) await Promise.resolve(); };
+    const queue = new UpscaleQueue(UPSCALE_MODELS.find(m => m.id === 'anime4k-a')!, 2, 768 * 1024 ** 2, {
+      check: async () => {}, load: async () => { loads++; return { data: new ArrayBuffer(0) }; },
+      worker: () => ({ render: async url => { rendered.push(+url); return { blob: new Blob(), width: 200, height: 300, duration: +url }; }, dispose: () => {} }),
+      decode: async r => ({ url: `ready:${r.duration}`, bytes: 240000, release: () => { released.push(r.duration); } }), publish: value => { state = value; },
+    });
+    queue.update(pages, [12, 13]); queue.setAhead(0);
+    const idle = loads;
+    await queue.start(); await tick(); const zero = [...rendered];
+    queue.setAhead(2); await tick(); const expanded = [...rendered];
+    queue.pause(); queue.setAhead(4); await tick(); const paused = rendered.length;
+    queue.resume(); await tick(); const resumed = [...rendered];
+    queue.setAhead(0); const reduced = [...state.images.keys()].sort((a,b)=>a-b);
+    queue.stop(); queue.setAhead(32); await tick(); const stopped = rendered.length;
+    queue.dispose(); return { idle, zero, expanded, paused, resumed, reduced, stopped, loads, released };
+  });
+  expect(result.idle).toBe(0); expect(result.zero).toEqual([12, 13]);
+  expect(result.expanded).toEqual([12, 13, 14, 15]); expect(result.paused).toBe(4);
+  expect(result.resumed).toEqual([12, 13, 14, 15, 16, 17]); expect(result.reduced).toEqual([12, 13]);
+  expect(result.stopped).toBe(6); expect(result.loads).toBe(1); expect(result.released.sort()).toEqual([12,13,14,15,16,17]);
+});
+
+test('AnimeSharp reports when the desktop budget caps three requested jobs at two', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const t = window.upscaleTest; let state!: UpscaleState;
+    const queue = new t.UpscaleQueue(t.UPSCALE_MODELS.find(m => m.id === 'anime-sharp')!, 3, 768 * 1024 ** 2, {
+      check: async () => {}, load: async () => ({ data: new ArrayBuffer(0) }),
+      worker: () => ({ render: () => new Promise(() => {}), dispose: () => {} }),
+      decode: async () => { throw Error('unused'); }, publish: value => { state = value; },
+    });
+    queue.update(Array.from({ length: 12 }, () => ({ url:'page', width:2000, height:1224 }) as ReaderPage), [1]);
+    await queue.start(); const active = state.active.length, limit = state.memoryLimit;
+    queue.stop(); const stoppedLimit = state.memoryLimit; queue.dispose();
+    return { active, limit, stoppedLimit };
+  });
+  expect(result).toEqual({ active: 2, limit: 768 * 1024 ** 2, stoppedLimit: undefined });
+});
+
+test('saved render-ahead preference keeps zero, defaults old settings, and clamps invalid ranges', async ({ page }) => {
+  const result = await page.evaluate(() => {
+    const parse = window.upscaleTest.parseReaderSettings;
+    return [null, '{}', '{"upscaleAhead":0}', '{"upscaleAhead":19}', '{"upscaleAhead":99}', '{"upscaleAhead":-3}', '{"upscaleAhead":3.9}', '{"upscaleAhead":"20"}'].map(raw => parse(raw, false).upscaleAhead);
+  });
+  expect(result).toEqual([8, 8, 0, 19, 32, 0, 3, 8]);
+});

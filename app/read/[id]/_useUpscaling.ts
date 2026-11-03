@@ -11,8 +11,8 @@ export function useUpscaling(pages: ReaderPage[], visible: number[], settings: R
   const model = selectedUpscaleModel(settings);
   const queue = useRef<UpscaleQueue | undefined>(undefined);
   const [state, setState] = useState(EMPTY);
-  const latest = useRef({ pages, visible });
-  latest.current = { pages, visible };
+  const latest = useRef({ pages, visible, ahead: settings.upscaleAhead });
+  latest.current = { pages, visible, ahead: settings.upscaleAhead };
   useEffect(() => {
     setState(EMPTY);
     if (!model) return;
@@ -31,11 +31,13 @@ export function useUpscaling(pages: ReaderPage[], visible: number[], settings: R
       publish: value => { if (alive) setState(value); },
     });
     queue.current = instance;
+    instance.setAhead(latest.current.ahead);
     instance.update(latest.current.pages, latest.current.visible);
     return () => { alive = false; instance.dispose(); queue.current = undefined; };
   }, [model, settings.upscaleJobs, phone]);
+  useEffect(() => { queue.current?.setAhead(settings.upscaleAhead); }, [settings.upscaleAhead]);
   const visibleKey = visible.join(",");
   useEffect(() => { queue.current?.update(pages, latest.current.visible); }, [pages, visibleKey]);
-  return { model, state, start: () => { void queue.current?.start(); }, pause: () => queue.current?.pause(), resume: () => queue.current?.resume(), stop: () => queue.current?.stop() };
+  return { model, state, jobs: settings.upscaleJobs, start: () => { void queue.current?.start(); }, pause: () => queue.current?.pause(), resume: () => queue.current?.resume(), stop: () => queue.current?.stop() };
 }
 export type Upscaling = ReturnType<typeof useUpscaling>;

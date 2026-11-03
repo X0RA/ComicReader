@@ -38,7 +38,7 @@ export function defaultReaderSettings(phone: boolean): ReaderSettings {
     direction: "ltr", autoSpread: phone, spineGap: 2, coverAlone: true, wideAlone: true,
     fit: phone ? "width" : "height", zoom: 100, noUpscale: true, crop: false, cropTightness: 50,
     cropExtraHorizontal: 0, cropExtraVertical: 0,
-    upscaleModel: "off", upscaleMode: "A", upscaleScale: "2", upscaleDenoise: "conservative", upscaleJobs: 1,
+    upscaleModel: "off", upscaleMode: "A", upscaleScale: "2", upscaleDenoise: "conservative", upscaleJobs: 1, upscaleAhead: 8,
     tapZones: "sides", swapTapZones: false, wheel: "scroll", transition: "slide",
     autoScroll: 0, autoAdvance: true, background: "black", brightness: 100,
     warmth: 0, shadow: !phone, greyscale: false, keepAwake: true,
@@ -53,7 +53,7 @@ const choices = {
   wheel: ["scroll", "turn"], transition: ["none", "slide", "fade"],
   background: ["black", "grey", "white"],
 };
-const ranges = { upscaleJobs: [1, 3], maxWidth: [400, 1200], spineGap: [0, 24], zoom: [50, 200], cropTightness: [0, 100], cropExtraHorizontal: [0, 10], cropExtraVertical: [0, 10], autoScroll: [0, 10], brightness: [20, 100], warmth: [0, 100] };
+const ranges = { upscaleAhead: [0, 32], upscaleJobs: [1, 3], maxWidth: [400, 1200], spineGap: [0, 24], zoom: [50, 200], cropTightness: [0, 100], cropExtraHorizontal: [0, 10], cropExtraVertical: [0, 10], autoScroll: [0, 10], brightness: [20, 100], warmth: [0, 100] };
 
 /** Only known, correctly typed values enter rendering or CSS; old/partial settings are safe. */
 export function parseReaderSettings(raw: string | null, phone: boolean): ReaderSettings {
@@ -80,6 +80,7 @@ export function parseReaderSettings(raw: string | null, phone: boolean): ReaderS
     }
   } catch { /* Corrupt or unavailable storage never prevents reading. */ }
   result.upscaleJobs = Math.floor(result.upscaleJobs);
+  result.upscaleAhead = Math.floor(result.upscaleAhead);
   if (result.layout === "webtoon" && result.fit === "height") result.fit = "width";
   return result;
 }

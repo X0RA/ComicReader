@@ -7,7 +7,7 @@ export interface UpscaleState {
   status: "idle" | "loading" | "running" | "paused" | "waiting" | "complete" | "error";
   download: number; active: { page: number; progress: number }[];
   images: ReadonlyMap<number, string>; rendered: number; bytes: number; secondsPerPage?: number;
-  message?: string; warning?: string;
+  message?: string; warning?: string; memoryLimit?: number;
 }
 interface Dependencies {
   check(): Promise<void>;
@@ -37,6 +37,8 @@ export class UpscaleQueue {
   private warning?: string;
   private download = 0;
   private fatal = false;
+  private ahead = 8;
+  private memoryLimited = false;
   constructor(private model: UpscaleModel, private jobs: number, private budget: number, private deps: Dependencies) {}
   update(pages: ReaderPage[], visible: number[]) {
     this.pages = pages; this.visible = visible.length ? visible : [1];
@@ -44,7 +46,11 @@ export class UpscaleQueue {
     if (this.enabled) this.startPage = Math.max(this.startPage, Math.min(...this.visible));
     this.prune(); this.pump();
   }
-  private window() { return { first: Math.min(...this.visible), last: Math.min(this.pages.length, Math.max(...this.visible) + 8) }; }
+  setAhead(pages: number) {
+    this.ahead = Number.isFinite(pages) ? Math.max(0, Math.min(32, Math.floor(pages))) : 8;
+    this.prune(); this.pump();
+  }
+  private window() { return { first: Math.min(...this.visible), last: Math.min(this.pages.length, Math.max(...this.visible) + this.ahead) }; }
   private prune() {
     const { first, last } = this.window();
     for (const [page, entry] of this.cache) if (page < first - 2 || page > last) { entry.release(); this.cache.delete(page); }
@@ -62,6 +68,7 @@ export class UpscaleQueue {
     this.deps.publish({ status: this.fatal ? "error" : !this.enabled ? "idle" : this.paused ? "paused" : this.loading ? "loading" : active.length ? "running" : complete ? "complete" : "waiting",
       download: this.download, active, images: new Map([...this.cache].map(([page, value]) => [page, value.url])), rendered: this.count,
       bytes: [...this.cache.values()].reduce((sum, value) => sum + value.bytes, 0), secondsPerPage: this.count ? this.duration / this.count / 1000 : undefined,
+      memoryLimit: this.memoryLimited ? this.budget : undefined,
       message: this.message, warning: this.warning });
   }
   async start() {
@@ -84,7 +91,7 @@ export class UpscaleQueue {
   stop() {
     this.generation++; this.controller?.abort(); this.controller = undefined;
     this.slots.forEach(slot => slot.worker.dispose()); this.slots = []; this.weights = undefined;
-    this.enabled = false; this.paused = false; this.loading = false; this.emit();
+    this.enabled = false; this.paused = false; this.loading = false; this.memoryLimited = false; this.emit();
   }
   dispose() { this.stop(); for (const entry of this.cache.values()) entry.release(); this.cache.clear(); }
   private fail(error: unknown) {
@@ -93,6 +100,7 @@ export class UpscaleQueue {
   }
   private pump() {
     if (!this.enabled || this.paused || this.loading || !this.weights) { this.emit(); return; }
+    this.memoryLimited = false;
     for (const number of this.candidates()) {
       const page = this.pages[number - 1];
       // Never let background pages overtake a visible page still being extracted.
@@ -117,7 +125,7 @@ export class UpscaleQueue {
         const evict = [...this.cache.keys()].filter(n => !this.visible.includes(n)).sort((a, b) => Math.abs(b - number) - Math.abs(a - number));
         for (const n of evict) { this.cache.get(n)!.release(); this.cache.delete(n); if (this.used() + admission <= this.budget) break; }
       }
-      if (this.used() + admission > this.budget) break;
+      if (this.used() + admission > this.budget) { this.memoryLimited = true; break; }
       let slot = this.slots.find(slot => slot.page === undefined);
       if (!slot) {
         try { slot = { worker: this.deps.worker(this.weights), progress: 0, reserve: 0 }; this.slots.push(slot); }

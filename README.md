@@ -38,9 +38,9 @@ npm start
 
 Choose a model in **View options → Upscaling**, then click **Render from here** in
 the reader header. Selecting a model never starts a download or render. The
-current page/spread goes first, followed by up to eight pages ahead. Reading
+current page/spread goes first, followed by the selected number of pages ahead (0–32; default 8). Reading
 forward continues an already-started job; pause and stop are available in its
-progress panel. Going back to evicted pages requires another explicit start.
+progress panel. The render-ahead slider updates an active job without restarting it; zero renders only the current page/spread. The memory budget can limit both parallel jobs and the number of prepared pages, with an explanation in the progress panel. Going back to evicted pages requires another explicit start.
 
 Verified model weights stay in browser storage; enhanced pages only live in a
 bounded memory buffer and are discarded when leaving the comic. Clear cached
