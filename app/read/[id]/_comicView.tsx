@@ -1,16 +1,15 @@
 "use client";
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
-import { FULL_PAGE, readerPageWidth, type ReaderPage } from "@/lib/reader-pages";
+import { croppedPageSize, readerCropBounds, readerPageWidth, type ReaderPage } from "@/lib/reader-pages";
 import type { ReaderSettings } from "@/lib/reader-settings";
 import styles from "./reader.module.css";
 
 function PageImage({ page, number, settings, availableWidth, availableHeight, eager }: {
   page: ReaderPage; number: number; settings: ReaderSettings; availableWidth: number; availableHeight: number; eager: boolean;
 }) {
-  const bounds = settings.crop ? page.crop : FULL_PAGE;
-  const croppedWidth = page.width * (bounds.right - bounds.left);
-  const croppedHeight = page.height * (bounds.bottom - bounds.top);
+  const bounds = readerCropBounds(page, settings.crop, settings.cropTightness);
+  const { width: croppedWidth, height: croppedHeight } = croppedPageSize(page, bounds);
   const width = readerPageWidth({ width: croppedWidth, height: croppedHeight }, settings.fit, availableWidth, availableHeight, settings.zoom, settings.noUpscale);
   const height = width * croppedHeight / croppedWidth;
   const scale = width / croppedWidth;
@@ -86,7 +85,7 @@ const ComicView = forwardRef<ComicViewHandle, Props>(function ComicView({ pages,
     atEnd: () => { const root = scrollRef.current; return !!root && root.scrollTop + root.clientHeight >= root.scrollHeight - 3; },
   }), [jump]);
 
-  useLayoutEffect(() => { jump(currentRef.current); }, [jump, stageWidth, height, settings.maxWidth, settings.fit, settings.zoom, settings.noUpscale, settings.gap, settings.crop]);
+  useLayoutEffect(() => { jump(currentRef.current); }, [jump, stageWidth, height, settings.maxWidth, settings.fit, settings.zoom, settings.noUpscale, settings.gap, settings.crop, settings.cropTightness]);
   const spreadKey = visiblePages.join("-");
   useLayoutEffect(() => { if (paged) jump(currentRef.current); }, [paged, spreadKey, jump]);
 
@@ -169,12 +168,16 @@ const ComicView = forwardRef<ComicViewHandle, Props>(function ComicView({ pages,
     onTap((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
   };
   const indices = paged ? (settings.direction === "rtl" ? [...visiblePages].reverse() : visiblePages) : pages.map((_, index) => index + 1);
-  const ratios = visiblePages.reduce((sum, number) => sum + pages[number - 1].width / pages[number - 1].height, 0);
+  const pageRatio = (page: ReaderPage) => {
+    const size = croppedPageSize(page, readerCropBounds(page, settings.crop, settings.cropTightness));
+    return size.width / size.height;
+  };
+  const ratios = visiblePages.reduce((sum, number) => sum + pageRatio(pages[number - 1]), 0);
   return <div ref={scrollRef} role="region" aria-label="Comic pages" tabIndex={0} onPointerDown={pointerDown} onPointerUp={pointerUp} onPointerCancel={() => { pointerStart.current = null; }} className={`${styles.viewport} absolute inset-0 overflow-auto overscroll-contain focus-visible:outline-2 focus-visible:outline-ring`} style={{ overflowAnchor: "none", backgroundColor: { black: "#09090a", grey: "#3a3a3f", white: "#f4f3ef" }[settings.background] }}>
     <div key={paged ? spreadKey : "webtoon"} className={`${paged ? `flex w-max min-w-full items-start justify-center px-0 py-4 ${styles.page} ${styles[settings.transition] ?? ""}` : "relative flex w-max min-w-full flex-col items-center"}`} style={{ paddingLeft: paged && !phone ? 72 : 0, paddingRight: paged && !phone ? 72 : 0, gap: paged ? settings.spineGap : settings.gap ? 12 : 0, "--reader-slide": `${turnDirection * (settings.direction === "rtl" ? -1 : 1) * 24}px` } as CSSProperties}>
       {indices.map(number => {
         const page = pages[number - 1];
-        const pageWidth = paged ? (availableWidth - settings.spineGap * (visiblePages.length - 1)) * (page.width / page.height) / ratios : Math.min(stageWidth, settings.maxWidth);
+        const pageWidth = paged ? (availableWidth - settings.spineGap * (visiblePages.length - 1)) * pageRatio(page) / ratios : Math.min(stageWidth, settings.maxWidth);
         return <div key={page.url} data-reader-page={number} ref={element => { if (element) pageRefs.current.set(number, element); else pageRefs.current.delete(number); }} className="relative shrink-0">
           <PageImage page={page} number={number} settings={settings} availableWidth={pageWidth} availableHeight={availableHeight} eager={paged || Math.abs(number - currentPage) < 3} />
         </div>;

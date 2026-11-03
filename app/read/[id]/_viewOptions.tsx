@@ -19,7 +19,7 @@ function Toggle({ label, checked, onChange }: { label: string; checked: boolean;
 function Range({ label, value, min, max, step = 1, unit = "%", onChange }: { label: string; value: number; min: number; max: number; step?: number; unit?: string; onChange: (value: number) => void }) {
   const display = unit === "×" && value === 0 ? "Off" : `${value}${unit}`;
   return <label className="block"><span className="flex justify-between gap-3 text-sm"><span>{label}</span><output className="font-mono text-xs text-muted-foreground">{display}</output></span>
-    <input type="range" min={min} max={max} step={step} value={value} aria-valuetext={display} onChange={event => onChange(Number(event.target.value))} className="h-11 w-full cursor-pointer accent-primary" />
+    <input type="range" aria-label={label} min={min} max={max} step={step} value={value} aria-valuetext={display} onChange={event => onChange(Number(event.target.value))} className="h-11 w-full cursor-pointer accent-primary" />
   </label>;
 }
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -60,7 +60,10 @@ export default function ViewOptions({ settings: s, change, reset, onClose, phone
           <Segment label="Fit" value={s.fit} options={webtoon ? [["width", "Width"], ["original", "Original"]] : [["width", "Width"], ["height", "Height"], ["original", "Original"]]} onChange={fit => change({ fit })} />
           <Range label="Zoom" value={s.zoom} min={50} max={200} step={5} onChange={zoom => change({ zoom })} />
           <div>{toggle("noUpscale", "Don’t enlarge small pages")}{toggle("crop", "Crop borders")}</div>
-          {s.crop && <p className="text-xs leading-relaxed text-muted-foreground">Trims uniform black or white edges conservatively. Artwork and ambiguous margins are kept.</p>}
+          {s.crop && <>
+            <Range label="Crop tightness" value={s.cropTightness} min={0} max={100} step={5} onChange={cropTightness => change({ cropTightness })} />
+            <p className="text-xs leading-relaxed text-muted-foreground">0% keeps the original conservative crop. Higher values trim closer and tolerate faint paper texture and tiny scan specks. Reduce it if fine edge details disappear.</p>
+          </>}
         </Section>
         <Section title="Navigation">
           <Segment label="Tap zones" value={s.tapZones} options={[["off", "Off"], ["sides", "Sides"], ["vertical", "Top & bottom"]]} onChange={tapZones => change({ tapZones })} />

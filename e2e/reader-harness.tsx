@@ -11,8 +11,8 @@ const root = createRoot(host);
 const noop = () => {};
 const readerTest = {
   prepareReaderPage,
-  render(pages: ReaderPage[], visiblePages: number[], crop: boolean, layout: ReaderSettings['layout'] = 'single') {
-    const settings = { ...defaultReaderSettings(false), crop, layout, fit: 'original' as const };
+  render(pages: ReaderPage[], visiblePages: number[], crop: boolean, layout: ReaderSettings['layout'] = 'single', options: Partial<ReaderSettings> = {}) {
+    const settings = { ...defaultReaderSettings(false), crop, cropTightness: 0, layout, fit: 'original' as const, ...options };
     // Inspect the initial committed geometry before any image load event can fire.
     flushSync(() => root.render(<ComicView pages={pages} settings={settings} layout={layout}
       visiblePages={visiblePages} currentPage={visiblePages[0]} width={1000} height={800}

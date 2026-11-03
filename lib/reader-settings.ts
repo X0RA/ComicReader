@@ -13,6 +13,7 @@ export interface ReaderSettings {
   zoom: number;
   noUpscale: boolean;
   crop: boolean;
+  cropTightness: number;
   tapZones: "off" | "sides" | "vertical";
   swapTapZones: boolean;
   wheel: "scroll" | "turn";
@@ -31,7 +32,7 @@ export function defaultReaderSettings(phone: boolean): ReaderSettings {
   return {
     layout: phone ? "webtoon" : "spread", maxWidth: 760, gap: false,
     direction: "ltr", autoSpread: phone, spineGap: 2, coverAlone: true, wideAlone: true,
-    fit: phone ? "width" : "height", zoom: 100, noUpscale: true, crop: false,
+    fit: phone ? "width" : "height", zoom: 100, noUpscale: true, crop: false, cropTightness: 50,
     tapZones: "sides", swapTapZones: false, wheel: "scroll", transition: "slide",
     autoScroll: 0, autoAdvance: true, background: "black", brightness: 100,
     warmth: 0, shadow: !phone, greyscale: false, keepAwake: true,
@@ -44,7 +45,7 @@ const choices = {
   wheel: ["scroll", "turn"], transition: ["none", "slide", "fade"],
   background: ["black", "grey", "white"],
 };
-const ranges = { maxWidth: [400, 1200], spineGap: [0, 24], zoom: [50, 200], autoScroll: [0, 10], brightness: [20, 100], warmth: [0, 100] };
+const ranges = { maxWidth: [400, 1200], spineGap: [0, 24], zoom: [50, 200], cropTightness: [0, 100], autoScroll: [0, 10], brightness: [20, 100], warmth: [0, 100] };
 
 /** Only known, correctly typed values enter rendering or CSS; old/partial settings are safe. */
 export function parseReaderSettings(raw: string | null, phone: boolean): ReaderSettings {
