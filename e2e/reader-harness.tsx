@@ -16,8 +16,8 @@ const root = createRoot(host);
 const noop = () => {};
 let comic: ReturnType<typeof useComic> | undefined;
 let firstReady: ReturnType<typeof useComic> | undefined;
-function ComicProbe({ id }: { id: string }) {
-  const state = useComic(id, 0);
+function ComicProbe({ id, requestedPage }: { id: string; requestedPage?: number }) {
+  const state = useComic(id, 0, requestedPage);
   useLayoutEffect(() => {
     comic = state;
     if (!state.loading && state.pages.length && !firstReady) firstReady = state;
@@ -28,7 +28,7 @@ const readerTest = {
   prepareReaderPage,
   get comic() { return comic; },
   get firstReady() { return firstReady; },
-  mountComic(id: string) { comic = firstReady = undefined; flushSync(() => root.render(<ComicProbe id={id} />)); },
+  mountComic(id: string, requestedPage?: number) { comic = firstReady = undefined; flushSync(() => root.render(<ComicProbe id={id} requestedPage={requestedPage} />)); },
   unmount() { flushSync(() => root.render(null)); },
   async seedComic(id: string, total: number, savedPage = 1, broken: number[] = []) {
     const canvas = document.createElement('canvas'); canvas.width = 100; canvas.height = 150;
@@ -48,12 +48,12 @@ const readerTest = {
     await db.downloads.put({ id, url, status: 'completed', progress: 100, backend: 'idb', fileSize: data.size });
     await db.markComicStatus(id, 'in_progress', savedPage, total);
   },
-  render(pages: ReaderPage[], visiblePages: number[], crop: boolean, layout: ReaderSettings['layout'] = 'single', options: Partial<ReaderSettings> = {}) {
+  render(pages: ReaderPage[], visiblePages: number[], crop: boolean, layout: ReaderSettings['layout'] = 'single', options: Partial<ReaderSettings> = {}, interaction: { phone?: boolean; panelOpen?: boolean } = {}) {
     const settings = { ...defaultReaderSettings(false), crop, cropTightness: 0, layout, fit: 'original' as const, ...options };
     // Inspect the initial committed geometry before any image load event can fire.
     flushSync(() => root.render(<ComicView pages={pages} settings={settings} layout={layout}
       visiblePages={visiblePages} currentPage={visiblePages[0]} width={1000} height={800}
-      phone={false} panelOpen={false} turnDirection={1} onPage={noop} onScrollDirection={noop}
+      phone={interaction.phone ?? false} panelOpen={interaction.panelOpen ?? false} turnDirection={1} onPage={noop} onScrollDirection={noop}
       onTap={noop} onTurn={noop} onEnd={noop} autoRunning={false} />));
     return [...host.querySelectorAll<HTMLImageElement>('img')].map(image => ({
       left: parseFloat(image.style.left), top: parseFloat(image.style.top),

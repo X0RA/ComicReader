@@ -5,9 +5,11 @@ A web-based comic reader built with Next.js, React, TypeScript, and Tailwind CSS
 - Browse a folder-based library and sort comics by name, size, or file type.
 - Read in a responsive, vertically scrolling layout with previous/next comic navigation.
 - Automatically track your current page and reading status, then resume where you left off.
+- Bookmark pages with optional notes, browse them across comics, or open the current comic's bookmark sidebar.
+- Zoom at the mouse pointer with the desktop mouse wheel, drag to pan, and reset to your reading size.
 - Return to your last-opened folder and manage downloaded comics.
 
-The app loads its catalogue from a hosted JSON file. Opening a comic downloads its ZIP/CBZ archive, extracts the page images in your browser, and displays them in order. Saved downloads are reused when available, and the next comic can preload in the background. Reading progress stays on your device.
+The app loads its catalogue from a hosted JSON file. Opening a comic downloads its ZIP/CBZ archive, extracts the page images in your browser, and displays them in order. Saved downloads are reused when available, and the next comic can preload in the background. Reading progress and bookmarks stay on your device. Clearing downloads keeps bookmarks; resetting all app storage removes them.
 
 ## Getting started
 

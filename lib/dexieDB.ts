@@ -46,7 +46,17 @@ export interface DownloadRecord {
   fileSize?: number; receivedBytes?: number; downloadedAt?: number; lastAccessedAt?: number; error?: string;
 }
 
+export interface ComicBookmark {
+  comicId: string;
+  comicName: string;
+  page: number;
+  note: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 class ComicsDatabase extends Dexie {
+  bookmarks!: Table<ComicBookmark, [string, number]>;
   downloads!: Table<DownloadRecord>;
   comics!: Table<ComicsRoot>;
   readComics!: Table<ReadComic>;
@@ -75,6 +85,7 @@ class ComicsDatabase extends Dexie {
       });
       await tx.table("downloads").bulkPut(records);
     });
+    this.version(4).stores({ bookmarks: "[comicId+page], comicId, updatedAt" });
   }
 
   // Store the entire comics data - fixed type error

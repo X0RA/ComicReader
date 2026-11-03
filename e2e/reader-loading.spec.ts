@@ -50,6 +50,23 @@ test('unreadable pages retain their numbers as remaining pages arrive', async ({
   expect(state.error).toBeUndefined();
 });
 
+test('a bookmarked page overrides resume progress and receives the opening window', async ({ page }) => {
+  await page.evaluate(async () => {
+    await window.readerTest.seedComic('bookmark', 100, 10);
+    window.readerTest.mountComic('bookmark', 70);
+  });
+  await page.waitForFunction(() => !!window.readerTest.firstReady);
+  const result = await page.evaluate(() => {
+    const state = window.readerTest.firstReady!;
+    return { page: state.initialPage, ready: state.pages.flatMap((page, index) => page.status ? [] : [index + 1]) };
+  });
+  expect(result).toEqual({ page: 70, ready: Array.from({ length: 17 }, (_, index) => 62 + index) });
+  // A second link within the same comic must not briefly reuse the old reader.
+  await page.evaluate(() => window.readerTest.mountComic('bookmark', 30));
+  await page.waitForFunction(() => !!window.readerTest.firstReady);
+  expect(await page.evaluate(() => window.readerTest.firstReady!.initialPage)).toBe(30);
+});
+
 test('leaving during background work revokes all page URLs and stops publications', async ({ page }) => {
   await page.evaluate(async () => {
     const active = new Set<string>();

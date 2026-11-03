@@ -12,6 +12,7 @@ import { prepareReaderPages } from "@/lib/reader-preparation";
 
 interface ComicState {
   id: string;
+  requestedPage?: number;
   chapter?: ReaderChapter;
   pages: ReaderPage[];
   initialPage: number;
@@ -24,8 +25,8 @@ interface ComicState {
   warning?: string;
 }
 
-export function useComic(id: string, retry: number) {
-  const [state, setState] = useState<ComicState>({ id, pages: [], initialPage: 1, prepared: 0, preparing: false, loading: true, progress: 0, phase: "Opening comic…" });
+export function useComic(id: string, retry: number, requestedPage?: number) {
+  const [state, setState] = useState<ComicState>({ id, requestedPage, pages: [], initialPage: 1, prepared: 0, preparing: false, loading: true, progress: 0, phase: "Opening comic…" });
   const priority = useRef(1);
   const prioritize = useCallback((page: number) => { priority.current = page; }, []);
   useEffect(() => {
@@ -35,7 +36,7 @@ export function useComic(id: string, retry: number) {
     let tracker: ReturnType<typeof setInterval> | undefined;
     const urls = new Set<string>();
     const update = (patch: Partial<ComicState>) => { if (!cancelled) setState(current => ({ ...current, ...patch })); };
-    setState({ id, pages: [], initialPage: 1, prepared: 0, preparing: false, loading: true, progress: 0, phase: "Opening comic…" });
+    setState({ id, requestedPage, pages: [], initialPage: 1, prepared: 0, preparing: false, loading: true, progress: 0, phase: "Opening comic…" });
     async function load() {
       try {
         const catalog = await db.getComicsData() ?? await db.updateFromRemoteDB();
@@ -58,7 +59,7 @@ export function useComic(id: string, retry: number) {
           if (cancelled) return;
           const names = archiveImageNames(Object.keys(zip.files)).filter(name => !zip.files[name].dir);
           if (!names.length) throw new Error("No supported page images were found in this archive.");
-          const initialPage = Math.max(1, Math.min(names.length, saved?.lastPage || 1));
+          const initialPage = Math.max(1, Math.min(names.length, requestedPage ?? (saved?.lastPage || 1)));
           priority.current = initialPage;
           const pages: ReaderPage[] = names.map(name => ({ name, url: "", width: 600, height: 900, crop: FULL_PAGE, tightCrop: FULL_PAGE, status: "pending" }));
           let completed = 0, failed = 0, readable = 0, lastPrepared = 0, lastPublished = 0;
@@ -123,7 +124,7 @@ export function useComic(id: string, retry: number) {
     }
     void load();
     return () => { cancelled = true; controller.abort(); clearInterval(tracker); urls.forEach(url => URL.revokeObjectURL(url)); };
-  }, [id, retry]);
+  }, [id, retry, requestedPage]);
   // Do not render previous chapter URLs during the render before the effect resets.
-  return { ...(state.id === id ? state : { id, pages: [], initialPage: 1, prepared: 0, preparing: false, loading: true, progress: 0, phase: "Opening comic…" } satisfies ComicState), prioritize };
+  return { ...(state.id === id && state.requestedPage === requestedPage ? state : { id, requestedPage, pages: [], initialPage: 1, prepared: 0, preparing: false, loading: true, progress: 0, phase: "Opening comic…" } satisfies ComicState), prioritize };
 }

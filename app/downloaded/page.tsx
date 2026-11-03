@@ -95,12 +95,12 @@ export default function DownloadedPage() {
         </div>
         {storage && <div className="mb-5 space-y-2 rounded-xl border bg-card p-4 text-xs leading-relaxed text-muted-foreground">
           <p>Browser storage: {size(storage.usage ?? 0)} used · Comic cache budget: {size(storage.budget)}.</p>
-          <p>Older cached comics are removed when space is needed. Reading progress is kept.</p>
+          <p>Older cached comics are removed when space is needed. Reading progress and bookmarks are kept.</p>
           <button type="button" className="min-h-11 text-primary underline underline-offset-4" onClick={async () => {
             try { await navigator.storage.persist(); setStorage(await storageInfo()); }
             catch (err) { setError(String(err)); }
           }}>{storage.persistent ? 'Persistent storage enabled' : 'Request persistent storage'}</button>
-          <p>Clearing site data removes comics and reading progress. Cached comics alone do not guarantee the app opens offline.</p>
+          <p>Clearing site data removes comics, reading progress, and bookmarks. Cached comics alone do not guarantee the app opens offline.</p>
         </div>}
         {error && !confirmation && <p role="alert" className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">{error}</p>}
         {!loading && comics.length === 0 && <div className="border-t py-12 text-center text-muted-foreground"><p>No comics downloaded yet.</p><Link href="/" className="mt-3 inline-flex min-h-11 items-center text-primary hover:underline">Browse library</Link></div>}
@@ -114,7 +114,7 @@ export default function DownloadedPage() {
       </section>
       <dialog ref={dialog} aria-labelledby="confirm-title" aria-describedby="confirm-description" onCancel={event => { event.preventDefault(); if (!busy) setConfirmation(null); }} className="fixed inset-0 m-auto w-[calc(100%_-_2rem)] max-w-md rounded-2xl border bg-card p-6 text-card-foreground shadow-xl backdrop:bg-black/60">
         <h2 id="confirm-title" className="text-xl font-semibold">{title}</h2>
-        <p id="confirm-description" className="mt-3 break-words text-sm leading-relaxed text-muted-foreground">{confirmation?.kind === 'reset' ? 'Remove this app’s downloaded comics, catalog cache, reading progress, reader options, and saved theme. This cannot be undone.' : confirmation?.kind === 'clear' ? 'Remove every downloaded comic from this device. Reading progress and settings are kept. You can download comics again from the library.' : `Remove ${confirmation?.kind === 'delete' ? confirmation.comic.name : 'this comic'} from this device? You can download it again from the library.`}</p>
+        <p id="confirm-description" className="mt-3 break-words text-sm leading-relaxed text-muted-foreground">{confirmation?.kind === 'reset' ? 'Remove this app’s downloaded comics, catalog cache, reading progress, bookmarks, reader options, and saved theme. This cannot be undone.' : confirmation?.kind === 'clear' ? 'Remove every downloaded comic from this device. Reading progress, bookmarks, and settings are kept. You can download comics again from the library.' : `Remove ${confirmation?.kind === 'delete' ? confirmation.comic.name : 'this comic'} from this device? You can download it again from the library.`}</p>
         {error && <p role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
         <div className="mt-6 flex justify-end gap-2"><button ref={cancel} type="button" disabled={busy} className={button} onClick={() => { setConfirmation(null); setError(null); }}>Cancel</button><button type="button" disabled={busy} className={danger} onClick={confirm}>{busy ? 'Removing…' : confirmation?.kind === 'reset' ? 'Hard reset' : confirmation?.kind === 'clear' ? 'Clear all' : 'Delete'}</button></div>
       </dialog>
