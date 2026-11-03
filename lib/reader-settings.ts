@@ -14,6 +14,8 @@ export interface ReaderSettings {
   noUpscale: boolean;
   crop: boolean;
   cropTightness: number;
+  cropExtraHorizontal: number;
+  cropExtraVertical: number;
   tapZones: "off" | "sides" | "vertical";
   swapTapZones: boolean;
   wheel: "scroll" | "turn";
@@ -33,6 +35,7 @@ export function defaultReaderSettings(phone: boolean): ReaderSettings {
     layout: phone ? "webtoon" : "spread", maxWidth: 760, gap: false,
     direction: "ltr", autoSpread: phone, spineGap: 2, coverAlone: true, wideAlone: true,
     fit: phone ? "width" : "height", zoom: 100, noUpscale: true, crop: false, cropTightness: 50,
+    cropExtraHorizontal: 0, cropExtraVertical: 0,
     tapZones: "sides", swapTapZones: false, wheel: "scroll", transition: "slide",
     autoScroll: 0, autoAdvance: true, background: "black", brightness: 100,
     warmth: 0, shadow: !phone, greyscale: false, keepAwake: true,
@@ -45,7 +48,7 @@ const choices = {
   wheel: ["scroll", "turn"], transition: ["none", "slide", "fade"],
   background: ["black", "grey", "white"],
 };
-const ranges = { maxWidth: [400, 1200], spineGap: [0, 24], zoom: [50, 200], cropTightness: [0, 500], autoScroll: [0, 10], brightness: [20, 100], warmth: [0, 100] };
+const ranges = { maxWidth: [400, 1200], spineGap: [0, 24], zoom: [50, 200], cropTightness: [0, 100], cropExtraHorizontal: [0, 10], cropExtraVertical: [0, 10], autoScroll: [0, 10], brightness: [20, 100], warmth: [0, 100] };
 
 /** Only known, correctly typed values enter rendering or CSS; old/partial settings are safe. */
 export function parseReaderSettings(raw: string | null, phone: boolean): ReaderSettings {
@@ -55,6 +58,11 @@ export function parseReaderSettings(raw: string | null, phone: boolean): ReaderS
     const saved: unknown = JSON.parse(raw);
     if (!saved || typeof saved !== "object" || Array.isArray(saved)) return result;
     const source = saved as Record<string, unknown>;
+    // Preserve the old 100–500% slider's appearance when moving to separate axes.
+    if (!("cropExtraHorizontal" in source) && !("cropExtraVertical" in source)
+      && typeof source.cropTightness === "number" && Number.isFinite(source.cropTightness) && source.cropTightness > 100) {
+      result.cropExtraHorizontal = result.cropExtraVertical = (Math.min(500, source.cropTightness) - 100) / 40;
+    }
     const target = result as unknown as Record<string, unknown>;
     for (const key of Object.keys(result)) {
       const value = source[key];

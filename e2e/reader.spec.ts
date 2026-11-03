@@ -66,7 +66,7 @@ test('canvas failures retain readable pages and invalid images still reject', as
   expect(result.rejected).toBe(true);
 });
 
-test('tightness changes prepared geometry without image analysis or a page-turn flash', async ({ page }) => {
+test('tightness and independent extra crop change prepared geometry without image analysis or a page-turn flash', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = 100;
@@ -82,15 +82,21 @@ test('tightness changes prepared geometry without image analysis or a page-turn 
       const pages = [prepared, { ...prepared, url: prepared.url + '#second' }];
       const render = (tightness: number, visiblePages = [1]) => window.readerTest.render(pages, visiblePages, true, 'single', { cropTightness: tightness });
       const conservative = render(0), middle = render(50), tight = render(100);
-      const extra = render(250), maximum = render(500);
-      const turned = render(500, [2]);
-      const off = window.readerTest.render(pages, [2], false, 'single', { cropTightness: 500 });
-      return { conservative, middle, tight, extra, maximum, turned, off, reads };
+      const horizontal = window.readerTest.render(pages, [1], true, 'single', { cropTightness: 100, cropExtraHorizontal: 5 });
+      const vertical = window.readerTest.render(pages, [1], true, 'single', { cropTightness: 100, cropExtraVertical: 5 });
+      const options = { cropTightness: 100, cropExtraHorizontal: 10, cropExtraVertical: 10 };
+      const maximum = window.readerTest.render(pages, [1], true, 'single', options);
+      const turned = window.readerTest.render(pages, [2], true, 'single', options);
+      const off = window.readerTest.render(pages, [2], false, 'single', options);
+      return { conservative, middle, tight, horizontal, vertical, maximum, turned, off, reads };
     } finally { Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', { configurable: true, value: original }); }
   });
   expect(result.tight[0].width).toBeLessThan(result.middle[0].width);
   expect(result.middle[0].width).toBeLessThan(result.conservative[0].width);
-  expect(result.extra[0].width).toBeLessThan(result.tight[0].width);
+  expect(result.horizontal[0].width).toBeCloseTo(result.tight[0].width * .9, 2);
+  expect(result.horizontal[0].height).toBe(result.tight[0].height);
+  expect(result.vertical[0].width).toBe(result.tight[0].width);
+  expect(result.vertical[0].height).toBeCloseTo(result.tight[0].height * .9, 2);
   expect(result.maximum[0].width).toBeCloseTo(result.tight[0].width * .8, 2);
   expect(result.maximum[0].height).toBeCloseTo(result.tight[0].height * .8, 2);
   expect(result.turned).toEqual(result.maximum);

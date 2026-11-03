@@ -61,8 +61,10 @@ export default function ViewOptions({ settings: s, change, reset, onClose, phone
           <Range label="Zoom" value={s.zoom} min={50} max={200} step={5} onChange={zoom => change({ zoom })} />
           <div>{toggle("noUpscale", "Don’t enlarge small pages")}{toggle("crop", "Crop borders")}</div>
           {s.crop && <>
-            <Range label="Crop tightness" value={s.cropTightness} min={0} max={500} step={5} onChange={cropTightness => change({ cropTightness })} />
-            <p className="text-xs leading-relaxed text-muted-foreground">0–100% adjusts automatic border detection. Above 100% adds extra trim on every edge, up to 10% per edge at 500%. This can cut into artwork or text.</p>
+            <Range label="Crop tightness" value={s.cropTightness} min={0} max={100} step={5} onChange={cropTightness => change({ cropTightness })} />
+            <Range label="Extra horizontal crop" value={s.cropExtraHorizontal} min={0} max={10} step={0.25} onChange={cropExtraHorizontal => change({ cropExtraHorizontal })} />
+            <Range label="Extra vertical crop" value={s.cropExtraVertical} min={0} max={10} step={0.25} onChange={cropExtraVertical => change({ cropExtraVertical })} />
+            <p className="text-xs leading-relaxed text-muted-foreground">Tightness adjusts automatic border cropping. Extra horizontal crop trims the left and right edges; vertical trims the top and bottom. Each percentage applies per edge after automatic cropping.</p>
           </>}
         </Section>
         <Section title="Navigation">

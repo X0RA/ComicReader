@@ -8,7 +8,7 @@ import styles from "./reader.module.css";
 function PageImage({ page, number, settings, availableWidth, availableHeight, eager, magnification }: {
   page: ReaderPage; number: number; settings: ReaderSettings; availableWidth: number; availableHeight: number; eager: boolean; magnification: number;
 }) {
-  const bounds = readerCropBounds(page, settings.crop, settings.cropTightness);
+  const bounds = readerCropBounds(page, settings.crop, settings.cropTightness, settings.cropExtraHorizontal, settings.cropExtraVertical);
   const { width: croppedWidth, height: croppedHeight } = croppedPageSize(page, bounds);
   const width = readerPageWidth({ width: croppedWidth, height: croppedHeight }, settings.fit, availableWidth, availableHeight, settings.zoom, settings.noUpscale) * magnification;
   const height = width * croppedHeight / croppedWidth;
@@ -100,10 +100,10 @@ const ComicView = forwardRef<ComicViewHandle, Props>(function ComicView({ pages,
     atEnd: () => { const root = scrollRef.current; return !!root && root.scrollTop + root.clientHeight >= root.scrollHeight - 3; },
   }), [jump]);
 
-  useLayoutEffect(() => { jump(currentRef.current); }, [jump, stageWidth, height, settings.maxWidth, settings.fit, settings.zoom, settings.noUpscale, settings.gap, settings.crop, settings.cropTightness]);
+  useLayoutEffect(() => { jump(currentRef.current); }, [jump, stageWidth, height, settings.maxWidth, settings.fit, settings.zoom, settings.noUpscale, settings.gap, settings.crop, settings.cropTightness, settings.cropExtraHorizontal, settings.cropExtraVertical]);
   const spreadKey = visiblePages.join("-");
   useLayoutEffect(() => { if (paged) jump(currentRef.current); }, [paged, spreadKey, jump]);
-  useLayoutEffect(() => { if (cameraRef.current.active) resetZoom(); }, [paged, paged ? spreadKey : "webtoon", phone, stageWidth, height, settings.fit, settings.zoom, settings.noUpscale, settings.crop, settings.cropTightness, resetZoom]);
+  useLayoutEffect(() => { if (cameraRef.current.active) resetZoom(); }, [paged, paged ? spreadKey : "webtoon", phone, stageWidth, height, settings.fit, settings.zoom, settings.noUpscale, settings.crop, settings.cropTightness, settings.cropExtraHorizontal, settings.cropExtraVertical, resetZoom]);
   useLayoutEffect(() => {
     if (resetPosition.current) {
       resetPosition.current = false;
@@ -241,7 +241,7 @@ const ComicView = forwardRef<ComicViewHandle, Props>(function ComicView({ pages,
   };
   const indices = paged ? (settings.direction === "rtl" ? [...visiblePages].reverse() : visiblePages) : pages.map((_, index) => index + 1);
   const pageRatio = (page: ReaderPage) => {
-    const size = croppedPageSize(page, readerCropBounds(page, settings.crop, settings.cropTightness));
+    const size = croppedPageSize(page, readerCropBounds(page, settings.crop, settings.cropTightness, settings.cropExtraHorizontal, settings.cropExtraVertical));
     return size.width / size.height;
   };
   const ratios = visiblePages.reduce((sum, number) => sum + pageRatio(pages[number - 1]), 0);
