@@ -195,7 +195,9 @@ class ComicsDatabase extends Dexie {
   // Update comics data from the remote DB
   async updateFromRemoteDB(): Promise<ContentItem[]> {
     try {
-      const response = await fetch("https://comic.xora.space/contents.json");
+      // nginx sends no Cache-Control, so without this the browser can serve a stale copy for days.
+      // no-cache revalidates via ETag every time (a cheap 304 when unchanged).
+      const response = await fetch("https://comic.xora.space/contents.json", { cache: "no-cache" });
       if (!response.ok) {
         throw new Error("Network response was not ok");
       }
