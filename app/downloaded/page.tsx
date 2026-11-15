@@ -7,6 +7,8 @@ import { getDownloadedComics, deleteDownloadedComic, clearDownloads, hardReset, 
 import { maintainArchives } from '@/lib/archiveMaintenance';
 import { OfflineStatus } from '@/components/offline-support';
 import { ThemeSwitcher } from '@/components/theme-controls';
+import { SourceSettings } from '@/components/source-settings';
+import { saveSources } from '@/lib/sources';
 import Link from 'next/link';
 
 interface CachedComic { id: string; name: string; totalSize: number; downloadedAt?: number }
@@ -21,6 +23,7 @@ export default function DownloadedPage() {
   const [error, setError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [storage, setStorage] = useState<Awaited<ReturnType<typeof storageInfo>> | null>(null);
+  const [sourceBusy, setSourceBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
@@ -63,6 +66,7 @@ export default function DownloadedPage() {
         // Use the storage manager to cancel transfers and remove OPFS archives safely.
         await hardReset(false);
         localStorage.removeItem('comic-reader-view-options');
+        saveSources([]);
         setTheme('light');
         localStorage.removeItem('theme');
       }
@@ -92,7 +96,7 @@ export default function DownloadedPage() {
             <p className="mt-1 font-mono text-xs text-muted-foreground" aria-live="polite">{loading ? 'Loading downloads…' : `${comics.length} ${comics.length === 1 ? 'comic' : 'comics'} · ${size(comics.reduce((total, comic) => total + comic.totalSize, 0))}`}</p>
           </div>
           <div className="flex gap-2">
-            <button type="button" className={button} disabled={loading || busy} onClick={() => setConfirmation({ kind: 'reset' })}>Hard reset</button>
+            <button type="button" className={button} disabled={loading || busy || sourceBusy} onClick={() => setConfirmation({ kind: 'reset' })}>Hard reset</button>
             <button type="button" className={danger} disabled={loading || busy || !comics.length} onClick={() => setConfirmation({ kind: 'clear' })}>Clear all</button>
           </div>
         </div>
@@ -115,9 +119,10 @@ export default function DownloadedPage() {
           </li>)}
         </ul>
       </section>
+      <SourceSettings onBusyChange={setSourceBusy} />
       <dialog ref={dialog} aria-labelledby="confirm-title" aria-describedby="confirm-description" onCancel={event => { event.preventDefault(); if (!busy) setConfirmation(null); }} className="fixed inset-0 m-auto w-[calc(100%_-_2rem)] max-w-md rounded-2xl border bg-card p-6 text-card-foreground shadow-xl backdrop:bg-black/60">
         <h2 id="confirm-title" className="text-xl font-semibold">{title}</h2>
-        <p id="confirm-description" className="mt-3 break-words text-sm leading-relaxed text-muted-foreground">{confirmation?.kind === 'reset' ? 'Remove this app’s downloaded comics, catalog cache, reading progress, bookmarks, cached upscaling models, reader options, and saved theme. This cannot be undone.' : confirmation?.kind === 'clear' ? 'Remove every downloaded comic from this device. Reading progress, bookmarks, and settings are kept. You can download comics again from the library.' : `Remove ${confirmation?.kind === 'delete' ? confirmation.comic.name : 'this comic'} from this device? You can download it again from the library.`}</p>
+        <p id="confirm-description" className="mt-3 break-words text-sm leading-relaxed text-muted-foreground">{confirmation?.kind === 'reset' ? 'Remove this app’s downloaded comics, catalog cache, reading progress, bookmarks, cached upscaling models, reader options, catalog sources, and saved theme. This cannot be undone.' : confirmation?.kind === 'clear' ? 'Remove every downloaded comic from this device. Reading progress, bookmarks, and settings are kept. You can download comics again from the library.' : `Remove ${confirmation?.kind === 'delete' ? confirmation.comic.name : 'this comic'} from this device? You can download it again from the library.`}</p>
         {error && <p role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
         <div className="mt-6 flex justify-end gap-2"><button ref={cancel} type="button" disabled={busy} className={button} onClick={() => { setConfirmation(null); setError(null); }}>Cancel</button><button type="button" disabled={busy} className={danger} onClick={confirm}>{busy ? 'Removing…' : confirmation?.kind === 'reset' ? 'Hard reset' : confirmation?.kind === 'clear' ? 'Clear all' : 'Delete'}</button></div>
       </dialog>

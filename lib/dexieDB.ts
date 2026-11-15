@@ -1,5 +1,6 @@
 import Dexie, { Table } from "dexie";
 import { ContentItem, File, Folder } from "./types";
+import { DEFAULT_SOURCE_ID, filterActiveSources, fetchCatalog, getSources, mergeCatalogs, type CatalogSource } from "./sources";
 
 // Define interfaces for database tables
 export interface ReadComic {
@@ -91,13 +92,15 @@ class ComicsDatabase extends Dexie {
   // Store the entire comics data - fixed type error
   async storeComicsData(data: ContentItem[]): Promise<void> {
     // Store new data with a wrapper object
-    await this.comics.put({ id: "root", content: data });
+    await this.comics.put({ id: "root", content: filterActiveSources(data) });
   }
 
   // Get comics data
   async getComicsData(): Promise<ContentItem[] | undefined> {
     const root = await this.comics.get("root");
     if (!root) return undefined;
+
+    root.content = filterActiveSources(root.content);
 
     // Get read comics to update the status
     const readComics = await this.getReadComics();
@@ -195,35 +198,25 @@ class ComicsDatabase extends Dexie {
   // Update comics data from the remote DB
   async updateFromRemoteDB(): Promise<ContentItem[]> {
     try {
-      // nginx sends no Cache-Control, so without this the browser can serve a stale copy for days.
-      // no-cache revalidates via ETag every time (a cheap 304 when unchanged).
-      const response = await fetch("https://comic.xora.space/contents.json", { cache: "no-cache" });
-      if (!response.ok) {
-        throw new Error("Network response was not ok");
-      }
-
-      const rawData = await response.json();
-
-      // Extract data from the response based on its structure
-      let data: ContentItem[];
-
-      if (Array.isArray(rawData)) {
-        data = rawData as ContentItem[];
-      } else if (rawData && typeof rawData === "object") {
-        if ("children" in rawData && rawData.type === "folder") {
-          // Handle case where API returns a root folder object with children
-          data = (rawData as Folder).children;
-        } else if ("content" in rawData) {
-          // Handle case where API returns {content: [...]} structure
-          data = (rawData as { content: ContentItem[] }).content;
+      // Each source refreshes independently; one that fails falls back to its last saved copy.
+      const sources = getSources();
+      const results = await Promise.allSettled(sources.map(source => fetchCatalog(source)));
+      const catalogs: { source: CatalogSource; items: ContentItem[] }[] = [];
+      for (const [index, result] of results.entries()) {
+        const source = sources[index], key = `source:${source.id}`;
+        if (result.status === "fulfilled") {
+          await this.comics.put({ id: key, content: result.value });
+          catalogs.push({ source, items: result.value });
         } else {
-          console.error("Unexpected data format:", rawData);
-          throw new Error("Invalid data format from remote API");
+          console.error(`Failed to refresh ${source.url}:`, result.reason);
+          // Catalogs saved before sources existed only have the merged root copy.
+          const saved = (await this.comics.get(key))?.content ?? (source.id === DEFAULT_SOURCE_ID
+            ? (await this.comics.get("root"))?.content.filter(item => !item.id.startsWith("source:")) : undefined);
+          if (saved) catalogs.push({ source, items: saved });
         }
-      } else {
-        console.error("Unexpected data format:", rawData);
-        throw new Error("Invalid data format from remote API");
       }
+      if (!catalogs.length && results.every(result => result.status === "rejected")) throw (results[0] as PromiseRejectedResult).reason;
+      const data = filterActiveSources(mergeCatalogs(catalogs));
 
       // Get comic status
       const readComics = await this.getReadComics();
