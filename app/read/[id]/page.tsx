@@ -24,6 +24,7 @@ import PreparationProgress from "./_preparationProgress";
 import { useUpscaling } from "./_useUpscaling";
 import UpscaleControls from "./_upscaleControls";
 import styles from "./reader.module.css";
+import { ReaderToolbar, useReaderFullscreen } from "./_fullscreen";
 
 // Serialize progress writes so a slower older IndexedDB write cannot win a page turn.
 let progressWrites = Promise.resolve();
@@ -34,9 +35,9 @@ function saveProgress(id: string, page: number, total: number, completed: boolea
 }
 function comicTitle(name: string) { return parseComicName(name).title; }
 
-function Reader({ id, chapter, pages, initialPage, prepared, preparing, prioritize, warning }: {
+function Reader({ id, chapter, pages, initialPage, prepared, preparing, prioritize, warning, fullscreen }: {
   id: string; chapter: ReaderChapter; pages: ReaderPage[]; initialPage: number; prepared: number; preparing: boolean;
-  prioritize: (page: number) => void; warning?: string;
+  prioritize: (page: number) => void; warning?: string; fullscreen: ReturnType<typeof useReaderFullscreen>;
 }) {
   const router = useRouter();
   const { settings, change, reset, ready, viewport, storageError } = useReaderSettings();
@@ -166,6 +167,7 @@ function Reader({ id, chapter, pages, initialPage, prepared, preparing, prioriti
 
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && document.fullscreenElement) return;
       if (panel || bookmarkEditor || event.altKey || event.ctrlKey || event.metaKey || (event.target instanceof HTMLElement && event.target.closest('input, select, textarea, [contenteditable="true"]'))) return;
       if (event.key === " " && event.target instanceof HTMLElement && event.target.closest("button, a")) return;
       const rtl = paged && settings.direction === "rtl";
@@ -192,7 +194,7 @@ function Reader({ id, chapter, pages, initialPage, prepared, preparing, prioriti
   const canNext = groupIndex < groups.length - 1 || (settings.autoAdvance && !!chapter.next);
   const rtl = paged && settings.direction === "rtl";
   return <main className="fixed inset-0 bg-background font-sans text-foreground">
-    <header className="absolute inset-x-0 top-0 z-30 flex h-[60px] items-center gap-1 border-b bg-background/90 px-1 backdrop-blur-xl sm:gap-3 sm:px-4">
+    <ReaderToolbar fullscreen={fullscreen}>
       <ReaderIconButton label="Back to library folder" onClick={back}><ChevronLeft size={19} /></ReaderIconButton>
       <h1 title={chapter.comic.name} className="min-w-0 flex-1 truncate text-[15px] font-medium">{comicTitle(chapter.comic.name)}</h1>
       <UpscaleControls upscaling={upscaling} />
@@ -203,9 +205,10 @@ function Reader({ id, chapter, pages, initialPage, prepared, preparing, prioriti
       <button type="button" aria-label="Toggle bookmarks sidebar" aria-expanded={bookmarksOpen} onClick={() => setBookmarksOpen(value => !value)} className={`flex size-11 shrink-0 items-center justify-center rounded-xl text-muted-foreground hover:bg-secondary ${bookmarksOpen ? "bg-secondary text-foreground" : ""}`}><PanelRight size={18} /></button>
       <button type="button" onClick={() => setPanel(true)} aria-label="View options" aria-haspopup="dialog" aria-expanded={panel} className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-muted-foreground hover:bg-secondary focus-visible:outline-2 focus-visible:outline-ring ${panel ? "bg-secondary text-foreground" : ""}`}><SlidersHorizontal size={19} /></button>
       <ThemeSwitcher />
-    </header>
-    <div className="absolute inset-x-0 top-[60px] bottom-0">
-      {ready && <ComicView ref={view} pages={pages} enhanced={upscaling.state.images} settings={settings} layout={layout} visiblePages={visiblePages} currentPage={currentPage} width={viewport.width} height={viewport.height} phone={viewport.phone} panelOpen={panel || !!bookmarkEditor} turnDirection={turnDirection} onPage={setCurrentPage}
+    </ReaderToolbar>
+    {fullscreen.error && <p role="status" className="fixed inset-x-3 top-[72px] z-40 mx-auto max-w-lg rounded-xl border bg-card p-3 text-sm">{fullscreen.error}</p>}
+    <div className="absolute inset-x-0 bottom-0" style={{ top: fullscreen.active ? 0 : 60 }}>
+      {ready && <ComicView ref={view} pages={pages} enhanced={upscaling.state.images} settings={settings} layout={layout} visiblePages={visiblePages} currentPage={currentPage} width={viewport.width} height={viewport.height - (fullscreen.active ? 0 : 60)} phone={viewport.phone} panelOpen={panel || !!bookmarkEditor} turnDirection={turnDirection} onPage={setCurrentPage}
         onScrollDirection={direction => { if (!viewport.phone) return; if (direction < 0) activity(); else if (!panel) setControls(false); }} onTap={onTap} onTurn={turn} onEnd={atEnd} autoRunning={settings.autoScroll > 0 && !autoPaused && pages[currentPage - 1].status !== "pending"} />}
     </div>
     {(progressError || (warning && !dismissWarning)) && <div role="status" className="fixed inset-x-3 top-[72px] z-30 mx-auto flex max-w-lg items-center gap-3 rounded-xl border bg-card p-3 text-xs shadow-lg"><span className="flex-1">{progressError ? "Reading progress could not be saved. Browser storage may be full." : warning}</span>{!progressError && <button type="button" onClick={() => setDismissWarning(true)} className="min-h-11 px-2 text-primary">Dismiss</button>}</div>}
@@ -237,6 +240,7 @@ export default function ReadFilePage({ params, searchParams }: { params: Promise
   const { page: requested } = use(searchParams);
   const requestedPage = typeof requested === "string" && /^\d+$/.test(requested) && Number.isSafeInteger(Number(requested)) && Number(requested) > 0 ? Number(requested) : undefined;
   const [retry, setRetry] = useState(0);
+  const fullscreen = useReaderFullscreen();
   const comic = useComic(id, retry, requestedPage);
   if (comic.loading || comic.error || !comic.chapter) return <main className="flex min-h-dvh flex-col bg-background font-sans text-foreground">
     <header className="flex h-[60px] items-center gap-3 border-b px-4"><Link href="/" aria-label="Back to library" className="flex h-11 w-11 items-center justify-center rounded-xl text-muted-foreground hover:bg-secondary"><ChevronLeft size={19} /></Link><h1 className="min-w-0 flex-1 truncate text-sm font-medium">{comic.chapter ? comicTitle(comic.chapter.comic.name) : "Reader"}</h1><ThemeSwitcher /></header>
@@ -244,5 +248,5 @@ export default function ReadFilePage({ params, searchParams }: { params: Promise
       {comic.error ? <><h2 className="text-lg font-medium">Couldn’t open this comic</h2><p role="alert" className="max-w-md text-sm text-muted-foreground">{comic.error}</p><button type="button" onClick={() => setRetry(value => value + 1)} className="min-h-11 rounded-xl bg-primary px-5 text-sm font-medium text-primary-foreground">Try again</button></> : <ReaderLoading phase={comic.phase} progress={comic.progress} />}
     </div>
   </main>;
-  return <Reader key={`${id}-${retry}-${requestedPage ?? "resume"}`} id={id} chapter={comic.chapter} pages={comic.pages} initialPage={comic.initialPage} prepared={comic.prepared} preparing={comic.preparing} prioritize={comic.prioritize} warning={comic.warning} />;
+  return <Reader fullscreen={fullscreen} key={`${id}-${retry}-${requestedPage ?? "resume"}`} id={id} chapter={comic.chapter} pages={comic.pages} initialPage={comic.initialPage} prepared={comic.prepared} preparing={comic.preparing} prioritize={comic.prioritize} warning={comic.warning} />;
 }

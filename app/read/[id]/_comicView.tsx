@@ -77,7 +77,7 @@ const ComicView = forwardRef<ComicViewHandle, Props>(function ComicView({ pages,
   callbacks.current = { onPage, onScrollDirection, onTurn, onEnd, panelOpen };
   const paged = layout !== "webtoon";
   const availableWidth = Math.max(1, stageWidth - (phone ? 0 : paged ? 144 : 32));
-  const availableHeight = Math.max(120, height - 60 - (phone ? 16 : 32));
+  const availableHeight = Math.max(120, height - (phone ? 16 : 32));
   const magnification = phone ? 1 : camera.scale;
   const zoomed = !phone && camera.active;
   const resetZoom = useCallback(() => {

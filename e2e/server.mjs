@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { build } from 'esbuild';
 import { createServer } from 'node:http';
 import JSZip from 'jszip';
+const fullscreenBundle = await build({ entryPoints: ['e2e/fullscreen-harness.tsx'], outfile: 'fullscreen.js', bundle: true, write: false, platform: 'browser' });
 const bundle = await build({ entryPoints: ['e2e/harness.ts'], bundle: true, write: false, platform: 'browser' });
 const readerBundle = await build({ entryPoints: ['e2e/reader-harness.tsx'], bundle: true, write: false, platform: 'browser', loader: { '.module.css': 'empty' } });
 const upscaleBundle = await build({ entryPoints: ['e2e/upscale-harness.tsx'], bundle: true, write: false, platform: 'browser', loader: { '.module.css': 'empty' } });
@@ -14,6 +15,14 @@ const comic = await zip.generateAsync({ type: 'nodebuffer' });
 zip.file('payload.bin', Buffer.alloc(2 * 1024 * 1024, 37));
 const large = await zip.generateAsync({ type: 'nodebuffer' });
 createServer(async (req, res) => {
+  if (req.url === '/fullscreen.js' || req.url === '/fullscreen.css') {
+    const extension = req.url.endsWith('.css') ? '.css' : '.js';
+    res.setHeader('Content-Type', extension === '.css' ? 'text/css' : 'text/javascript');
+    res.end(fullscreenBundle.outputFiles.find(file => file.path.endsWith(extension)).contents); return;
+  }
+  if (req.url === '/fullscreen') {
+    res.end('<!doctype html><link rel="stylesheet" href="/fullscreen.css"><style>body{margin:0}header{height:60px;display:flex;background:white}header button{width:60px;height:44px}output,[role=status]{position:absolute;top:100px}</style><body><script src="/fullscreen.js"></script>'); return;
+  }
   if (req.url === '/api/transfer') {
     const response = await transfer(new Request('http://127.0.0.1:4319/api/transfer', { method: req.method, headers: req.headers, body: Readable.toWeb(req), duplex: 'half' }));
     res.writeHead(response.status, Object.fromEntries(response.headers)); res.end(Buffer.from(await response.arrayBuffer())); return;

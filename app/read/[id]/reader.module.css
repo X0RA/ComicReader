@@ -55,3 +55,29 @@
   .loadingBook, .loadingTrack { animation: none; }
   .loadingTrack { transform: translateX(100%); }
 }
+
+/* A shallow top-edge target reveals the toolbar without reserving reading space. */
+.topControls { position: absolute; inset: 0 0 auto; height: 60px; z-index: 30; }
+.readerHeader { position: absolute; inset: 0 0 auto; }
+.fullscreenControls { height: 16px; }
+.fullscreenControls .readerHeader {
+  transform: translateY(-100%);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 180ms ease, opacity 180ms ease;
+}
+.fullscreenControls:hover .readerHeader,
+.fullscreenControls:has(:focus-visible) .readerHeader,
+.fullscreenControls:has([aria-expanded="true"]) .readerHeader {
+  transform: translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+.touchReveal { display: none; }
+@media (hover: none) {
+  .touchReveal { display: block; position: absolute; inset: 0 0 auto; height: 32px; width: 100%; }
+  .fullscreenControls:focus-within .readerHeader { transform: translateY(0); opacity: 1; pointer-events: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fullscreenControls .readerHeader { transition: none; }
+}
