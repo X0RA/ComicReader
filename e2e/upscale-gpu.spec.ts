@@ -3,8 +3,8 @@ import { UPSCALE_MODELS } from '../lib/upscale/models';
 
 test.use({ launchOptions: { args: ['--enable-unsafe-webgpu', '--use-angle=vulkan', '--enable-features=Vulkan', '--disable-vulkan-surface'] } });
 test.skip(!process.env.COMIC_GPU_TEST, 'Opt in with COMIC_GPU_TEST=1 on a WebGPU machine.');
-test.beforeEach(async ({ page, browserName }) => {
-  test.skip(browserName !== 'chromium', 'GPU integration suite uses Chromium.');
+test.skip(({ browserName }) => browserName !== 'chromium', 'GPU integration suite uses Chromium.');
+test.beforeEach(async ({ page }) => {
   await page.goto('/upscale'); await page.waitForFunction(() => !!window.upscaleTest);
 });
 

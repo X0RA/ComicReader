@@ -17,7 +17,8 @@ export default function BookmarksPage() {
     const group = groups.get(bookmark.comicId) ?? [];
     group.push(bookmark); groups.set(bookmark.comicId, group);
   }
-  const comics = [...groups.values()].sort((a, b) => Math.max(...b.map(item => item.updatedAt)) - Math.max(...a.map(item => item.updatedAt)));
+  const latest = (rows: ComicBookmark[]) => rows.reduce((max, row) => Math.max(max, row.updatedAt), 0);
+  const comics = [...groups.values()].sort((a, b) => latest(b) - latest(a));
   return <main className="mx-auto flex min-h-dvh w-full max-w-[880px] flex-col gap-8 px-5 pt-7 pb-16 sm:px-6">
     <header className="flex items-center justify-between gap-4">
       <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm font-medium">

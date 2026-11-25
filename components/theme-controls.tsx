@@ -37,7 +37,7 @@ export function ThemeSwitcher() {
 
 export function ThemeControls({ children }: { children: React.ReactNode }) {
   return (
-    <ThemeProvider attribute="class" themes={themes.map((item) => item.name)} defaultTheme="light" enableSystem={false} disableTransitionOnChange>
+    <ThemeProvider attribute="class" themes={themes.map((item) => item.name)} defaultTheme="light" enableSystem={false} enableColorScheme={false} disableTransitionOnChange>
       {children}
     </ThemeProvider>
   );

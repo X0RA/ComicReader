@@ -1,4 +1,5 @@
-import { test, expect, type BrowserContext } from '@playwright/test';
+import { test, expect } from '../e2e/storage-context';
+import type { BrowserContext } from '@playwright/test';
 import { build } from 'esbuild';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -118,4 +119,92 @@ test('offline reading survives a full browser restart', async ({ playwright, bro
     await context?.close();
     await rm(profile, { recursive: true, force: true });
   }
+});
+
+for (const network of ['disconnected', 'stalled']) test(`switch between downloads with a ${network} network while the browser reports online`, async ({ page, context }) => {
+  await page.reload();
+  await expect(page.getByRole('link', { name: 'saved-idb', exact: true })).toBeVisible();
+  await context.addCookies([{ name: 'offline-test-network', value: network, url: 'http://127.0.0.1:4322' }]);
+  expect(await page.evaluate(() => navigator.onLine)).toBe(true);
+  await page.getByRole('link', { name: 'saved-idb', exact: true }).click();
+  await expect(page.getByText('Page 5 of 8', { exact: true })).toHaveCount(1);
+  await page.evaluate(() => { document.documentElement.dataset.testReader = 'first'; });
+  await page.getByRole('button', { name: 'Next chapter', exact: true }).filter({ visible: true }).click();
+  await expect(page.getByText('Page 2 of 8', { exact: true })).toHaveCount(1);
+  await expect(page.locator('html')).toHaveAttribute('data-test-reader', 'first');
+  await page.goBack();
+  await expect(page.getByText('Page 5 of 8', { exact: true })).toHaveCount(1);
+});
+
+test('a backup link waits for confirmation before it changes stored settings', async ({ page }) => {
+  const token = await page.evaluate(() => {
+    const backup = { format: 'comic-reader-backup', version: 1, exportedAt: new Date().toISOString(),
+      settings: { theme: 'gruvbox', reader: {} }, bookmarks: [], progress: [], navigation: {} };
+    localStorage.setItem('theme', 'dark');
+    return 'j1.' + btoa(JSON.stringify(backup)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+  });
+  await page.goto('/import#' + token);
+  const confirm = page.getByRole('button', { name: 'Import this backup' });
+  await expect(confirm).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('theme'))).toBe('dark');
+  await confirm.click();
+  await expect(page.getByText('Import complete.')).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('theme'))).toBe('gruvbox');
+  expect(new URL(page.url()).hash).toBe('');
+});
+
+test('precache excludes the large upscale WASM, Retry online reacts to reconnect, and offline/legacy backup imports stay intact', async ({ page, context, browserName }) => {
+  const cachedUrls = await page.evaluate(async () => {
+    const name = (await caches.keys()).find(key => key.startsWith('comic-reader-app-'))!;
+    return (await (await caches.open(name)).keys()).map(req => new URL(req.url).pathname);
+  });
+  expect(cachedUrls.some(url => url.endsWith('.wasm'))).toBe(false);
+
+  const token = await page.evaluate(() => {
+    const backup = { format: 'comic-reader-backup', version: 1, exportedAt: new Date().toISOString(),
+      settings: { theme: 'gruvbox', reader: {} }, bookmarks: [], progress: [], navigation: {} };
+    localStorage.setItem('theme', 'dark');
+    return 'j1.' + btoa(JSON.stringify(backup)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+  });
+
+  // Legacy /import/<payload> stays in the online shell (no SW opaqueredirect trap) and moves token to hash.
+  await page.goto('/import/' + token);
+  await expect(page.locator('html')).not.toHaveAttribute('data-offline-app', 'true');
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/import');
+  await expect.poll(() => new URL(page.url()).hash).toBe('#' + token);
+
+  // Offline launch shows Retry online once connectivity returns, and offline backup import keeps its result visible.
+  await disconnect(context);
+  await page.goto('/downloaded');
+  await expect(page.locator('html')).toHaveAttribute('data-offline-app', 'true');
+  await expect(page.getByRole('button', { name: 'Retry online' })).toHaveCount(0);
+  await context.setOffline(false);
+  await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(true);
+  // Playwright's Firefox offline toggle updates navigator.onLine without firing window's online event.
+  if (browserName === 'firefox') await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(page.getByRole('button', { name: 'Retry online' })).toBeVisible();
+
+  await disconnect(context);
+  await page.goto('/import#' + token);
+  await expect(page.locator('html')).toHaveAttribute('data-offline-app', 'true');
+  await page.getByRole('button', { name: 'Import this backup' }).click();
+  await expect(page.getByText('Import complete.')).toBeVisible();
+  expect(new URL(page.url()).hash).toBe('');
+});
+
+for (const offline of [false, true]) test(`native fullscreen spans chapter turns in the ${offline ? 'offline' : 'online'} reader`, async ({ page, context }) => {
+  if (offline) await disconnect(context);
+  await page.goto('/read/saved-idb');
+  await page.getByRole('button', { name: 'Enter fullscreen' }).click();
+  await expect.poll(() => page.evaluate(() => !!document.fullscreenElement)).toBe(true);
+  const next = page.getByRole('button', { name: 'Next chapter', exact: true }).filter({ visible: true }).first();
+  await next.focus();
+  await next.press('Enter');
+  await expect(page.getByText('Page 2 of 8', { exact: true })).toHaveCount(1);
+  expect(await page.evaluate(() => document.fullscreenElement === document.documentElement)).toBe(true);
+  const leave = page.getByRole('button', { name: 'Back to library folder' });
+  await leave.focus();
+  await leave.press('Enter');
+  await expect(page.locator('[data-offline-status]')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => !!document.fullscreenElement)).toBe(false);
 });

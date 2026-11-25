@@ -41,7 +41,7 @@ export interface ComicDownloadMetadata {
 }
 
 export interface DownloadRecord {
-  id: string; url: string; name?: string; previous?: DownloadRecord;
+  id: string; url: string; name?: string; coverThumbnail?: string; previous?: DownloadRecord;
   status: ComicDownloadStatus; progress: number;
   backend: "idb" | "opfs"; archiveFile?: string; pendingFile?: string; token?: string;
   fileSize?: number; receivedBytes?: number; downloadedAt?: number; lastAccessedAt?: number; error?: string;
@@ -129,27 +129,19 @@ class ComicsDatabase extends Dexie {
     lastPage: number = 0,
     totalPages: number = 0
   ): Promise<void> {
-    await this.readComics.put({ id, status, lastPage, totalPages });
-
-
+    await this.transaction("rw", this.readComics, async () => {
+      const existing = await this.readComics.get(id);
+      const completed = existing?.status === "completed" && status === "in_progress";
+      await this.readComics.put({ id, status: completed ? "completed" : status,
+        lastPage: totalPages ? Math.min(lastPage, totalPages) : lastPage, totalPages });
+    });
   }
 
   async setTotalPages(id: string, totalPages: number): Promise<void> {
-    const comic = await this.readComics.get(id);
-    if (comic) {
-      // If the comic exists, preserve the existing status and lastPage
-      await this.readComics.put({ ...comic, totalPages });
-    } else {
-      // If the comic doesn't exist yet, create a new record with default values
-      await this.readComics.put({ 
-        id, 
-        status: "unread", 
-        lastPage: 0, 
-        totalPages 
-      });
-    }
-
-
+    await this.transaction("rw", this.readComics, async () => {
+      const comic = await this.readComics.get(id);
+      await this.markComicStatus(id, comic?.status ?? "unread", comic?.lastPage ?? 0, totalPages);
+    });
   }
 
   // Get all read comics
@@ -165,9 +157,10 @@ class ComicsDatabase extends Dexie {
 
   // Set last read comic
   async setLastReadComic(id: string): Promise<void> {
-    // Clear existing entries
-    await this.lastReadComic.clear();
-    await this.lastReadComic.put({ id, timestamp: Date.now() });
+    await this.transaction("rw", this.lastReadComic, async () => {
+      await this.lastReadComic.clear();
+      await this.lastReadComic.put({ id, timestamp: Date.now() });
+    });
   }
 
   // Get last read comic
@@ -181,9 +174,10 @@ class ComicsDatabase extends Dexie {
 
   // Set last opened folder
   async setLastFolder(id: string): Promise<void> {
-    // Clear existing entries
-    await this.lastFolder.clear();
-    await this.lastFolder.put({ id, timestamp: Date.now() });
+    await this.transaction("rw", this.lastFolder, async () => {
+      await this.lastFolder.clear();
+      await this.lastFolder.put({ id, timestamp: Date.now() });
+    });
   }
 
   // Get last opened folder
@@ -201,42 +195,50 @@ class ComicsDatabase extends Dexie {
       // Each source refreshes independently; one that fails falls back to its last saved copy.
       const sources = getSources();
       const results = await Promise.allSettled(sources.map(source => fetchCatalog(source)));
-      const catalogs: { source: CatalogSource; items: ContentItem[] }[] = [];
-      for (const [index, result] of results.entries()) {
-        const source = sources[index], key = `source:${source.id}`;
-        if (result.status === "fulfilled") {
-          await this.comics.put({ id: key, content: result.value });
-          catalogs.push({ source, items: result.value });
-        } else {
-          console.error(`Failed to refresh ${source.url}:`, result.reason);
-          // Catalogs saved before sources existed only have the merged root copy.
-          const saved = (await this.comics.get(key))?.content ?? (source.id === DEFAULT_SOURCE_ID
-            ? (await this.comics.get("root"))?.content.filter(item => !item.id.startsWith("source:")) : undefined);
-          if (saved) catalogs.push({ source, items: saved });
+      return await this.transaction("rw", "comics", "readComics", async () => {
+        const active = getSources();
+        const catalogs: { source: CatalogSource; items: ContentItem[] }[] = [];
+        for (const [index, result] of results.entries()) {
+          const source = sources[index], key = `source:${source.id}`;
+          if (!active.some(item => item.id === source.id)) continue;
+          if (result.status === "fulfilled") {
+            await this.comics.put({ id: key, content: result.value });
+            catalogs.push({ source, items: result.value });
+          } else {
+            console.error(`Failed to refresh ${source.url}:`, result.reason);
+            // Catalogs saved before sources existed only have the merged root copy.
+            const saved = (await this.comics.get(key))?.content ?? (source.id === DEFAULT_SOURCE_ID
+              ? (await this.comics.get("root"))?.content.filter(item => !item.id.startsWith("source:")) : undefined);
+            if (saved) catalogs.push({ source, items: saved });
+          }
         }
-      }
-      if (!catalogs.length && results.every(result => result.status === "rejected")) throw (results[0] as PromiseRejectedResult).reason;
-      const data = filterActiveSources(mergeCatalogs(catalogs));
+        for (const source of active.filter(item => !sources.some(original => item.id === original.id))) {
+          const saved = await this.comics.get(`source:${source.id}`);
+          if (saved) catalogs.push({ source, items: saved.content });
+        }
+        if (!catalogs.length && results.every(result => result.status === "rejected")) throw (results[0] as PromiseRejectedResult).reason;
+        const data = filterActiveSources(mergeCatalogs(catalogs));
 
-      // Get comic status
-      const readComics = await this.getReadComics();
-      const statusMap = new Map(
-        readComics.map((item) => [
-          item.id,
-          { status: item.status, lastPage: item.lastPage, totalPages: item.totalPages },
-        ])
-      );
+        // Get comic status
+        const readComics = await this.getReadComics();
+        const statusMap = new Map(
+          readComics.map((item) => [
+            item.id,
+            { status: item.status, lastPage: item.lastPage, totalPages: item.totalPages },
+          ])
+        );
 
-      // Update status in the fetched data
-      this.updateStatusInData(data, statusMap);
+        // Update status in the fetched data
+        this.updateStatusInData(data, statusMap);
 
-      // Sort folder contents
-      this.sortFolderContents(data);
+        // Sort folder contents
+        this.sortFolderContents(data);
 
-      // Store the updated data
-      await this.storeComicsData(data);
+        // Store the updated data
+        await this.storeComicsData(data);
 
-      return data;
+        return data;
+      });
     } catch (error) {
       console.error("Failed to update from remote DB:", error);
 

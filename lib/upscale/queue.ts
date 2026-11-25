@@ -111,10 +111,10 @@ export class UpscaleQueue {
       // Allow for decoded output, PNG encoding, input pixels and a tile/session working set.
       const reserve = pixels * 8 + page.width * page.height * 4;
       let admission = reserve + (this.slots.some(slot => slot.page === undefined) ? 0 : this.workerBytes());
-      if (pixels > 64_000_000 || reserve + this.workerBytes() > this.budget) {
+      if (Math.max(page.width, page.height) * this.model.scale > 16384 || pixels > 64_000_000 || reserve + this.workerBytes() > this.budget) {
         this.failed.add(number); this.message = `Page ${number} is too large for this rendering budget. Try a 2× model.`; continue;
       }
-      while (this.used() + admission > this.budget && this.slots.length > 1) {
+      while (this.used() + admission > this.budget && this.slots.filter(slot => slot.page === undefined).length > 1) {
         const idle = this.slots.findIndex(slot => slot.page === undefined);
         if (idle < 0) break;
         this.slots.splice(idle, 1)[0].worker.dispose();
@@ -123,6 +123,8 @@ export class UpscaleQueue {
       if (this.used() + admission > this.budget && this.visible.includes(number)) {
         // Visible pages take precedence over retained or prefetched images.
         const evict = [...this.cache.keys()].filter(n => !this.visible.includes(n)).sort((a, b) => Math.abs(b - number) - Math.abs(a - number));
+        const reclaimable = evict.reduce((sum, n) => sum + this.cache.get(n)!.bytes, 0);
+        if (this.used() - reclaimable + admission > this.budget) { this.memoryLimited = true; break; }
         for (const n of evict) { this.cache.get(n)!.release(); this.cache.delete(n); if (this.used() + admission <= this.budget) break; }
       }
       if (this.used() + admission > this.budget) { this.memoryLimited = true; break; }

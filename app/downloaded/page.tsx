@@ -25,6 +25,7 @@ export default function DownloadedPage() {
   const [storage, setStorage] = useState<Awaited<ReturnType<typeof storageInfo>> | null>(null);
   const [sourceBusy, setSourceBusy] = useState(false);
   const [busy, setBusy] = useState(false);
+  const maintenance = useRef<Promise<void>>(undefined);
   const dialog = useRef<HTMLDialogElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
   const { setTheme } = useTheme();
@@ -39,7 +40,8 @@ export default function DownloadedPage() {
   }
 
   useEffect(() => {
-    void maintainArchives().then(load).catch(err => setError(`Archive maintenance failed: ${String(err)}`));
+    maintenance.current = maintainArchives();
+    void maintenance.current.then(load).catch(err => setError(`Archive maintenance failed: ${String(err)}`));
     load().catch(err => setError(`Failed to load downloads: ${String(err)}`)).finally(() => setLoading(false));
   }, []);
 
@@ -64,15 +66,18 @@ export default function DownloadedPage() {
         await clearDownloads();
       } else {
         // Use the storage manager to cancel transfers and remove OPFS archives safely.
-        await hardReset(false);
-        localStorage.removeItem('comic-reader-view-options');
-        saveSources([]);
-        setTheme('light');
-        localStorage.removeItem('theme');
+        await maintenance.current?.catch(console.warn);
+        await hardReset(false, () => {
+          localStorage.removeItem('comic-reader-view-options');
+          saveSources([]);
+          setTheme('light');
+          localStorage.removeItem('theme');
+        });
       }
       await load();
       setConfirmation(null);
     } catch (err) {
+      void load().catch(console.warn);
       setError(`Unable to ${confirmation.kind === 'reset' ? 'reset app data' : 'delete downloads'}: ${String(err)}`);
     } finally { setBusy(false); }
   }
@@ -103,8 +108,8 @@ export default function DownloadedPage() {
         {storage && <div className="mb-5 space-y-2 rounded-xl border bg-card p-4 text-xs leading-relaxed text-muted-foreground">
           <p>Browser storage: {size(storage.usage ?? 0)} used · Comic cache budget: {size(storage.budget)}.</p>
           <p>Older cached comics are removed when space is needed. Reading progress and bookmarks are kept.</p>
-          <button type="button" className="min-h-11 text-primary underline underline-offset-4" onClick={async () => {
-            try { await navigator.storage.persist(); setStorage(await storageInfo()); }
+          <button type="button" disabled={!navigator.storage?.persist || storage.persistent} className="min-h-11 text-primary underline underline-offset-4" onClick={async () => {
+            try { await navigator.storage?.persist?.(); setStorage(await storageInfo()); }
             catch (err) { setError(String(err)); }
           }}>{storage.persistent ? 'Persistent storage enabled' : 'Request persistent storage'}</button>
           <p>Clearing site data removes comics, reading progress, and bookmarks. Wait for “Offline reading ready” before disconnecting. On iPhone/iPad, open the installed Home Screen app online and download comics there; its storage may be separate from Safari.</p>

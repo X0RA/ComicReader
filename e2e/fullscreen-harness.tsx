@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ReaderToolbar, useReaderFullscreen } from '../app/read/[id]/_fullscreen';
+import { ReaderFullscreenProvider, ReaderToolbar, useReaderFullscreen } from '../app/read/[id]/_fullscreen';
 function Reader() {
   const fullscreen = useReaderFullscreen();
   return <main>
@@ -11,6 +11,6 @@ function Reader() {
 }
 function Harness() {
   const [mounted, setMounted] = useState(true);
-  return <>{mounted && <Reader />}<button style={{ position: 'fixed', bottom: 80 }} onClick={() => setMounted(false)}>Unmount reader</button></>;
+  return <>{mounted && <ReaderFullscreenProvider><Reader /></ReaderFullscreenProvider>}<button style={{ position: 'fixed', bottom: 80 }} onClick={() => setMounted(false)}>Unmount reader</button></>;
 }
 createRoot(document.body.appendChild(document.createElement('div'))).render(<Harness />);

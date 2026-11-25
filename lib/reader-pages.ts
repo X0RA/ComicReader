@@ -22,13 +22,13 @@ export function readerCropBounds(page: ReaderPage, enabled: boolean, tightness: 
 }
 
 export function croppedPageSize(page: PageSize, bounds: CropBounds): PageSize {
-  return { width: page.width * (bounds.right - bounds.left), height: page.height * (bounds.bottom - bounds.top) };
+  return { width: Math.max(1, page.width * (bounds.right - bounds.left)), height: Math.max(1, page.height * (bounds.bottom - bounds.top)) };
 }
 
 /** Page numbers are one-based throughout navigation and persisted progress. */
 export function pairReaderPages(pages: readonly PageSize[], coverAlone: boolean, wideAlone: boolean, keep?: readonly number[]): number[][] {
   // Discovering a wide page elsewhere must not rearrange the visible spread.
-  if (keep?.length && keep[0] >= 1 && keep.at(-1)! <= pages.length) {
+  if (keep?.length && keep.every((n, i) => Number.isInteger(n) && n === keep[0] + i) && keep[0] >= 1 && keep.at(-1)! <= pages.length) {
     const start = keep[0] - 1, end = keep.at(-1)!;
     return [
       ...pairReaderPages(pages.slice(0, start), coverAlone, wideAlone),
@@ -53,6 +53,7 @@ export function pairReaderPages(pages: readonly PageSize[], coverAlone: boolean,
 }
 
 export function readerPageWidth(page: PageSize, fit: "width" | "height" | "original", availableWidth: number, availableHeight: number, zoom: number, noUpscale: boolean): number {
+  if (!(page.width > 0 && page.height > 0)) return 1;
   const base = fit === "original" ? 1 : fit === "height" ? availableHeight / page.height : availableWidth / page.width;
   const scale = base * zoom / 100;
   return Math.max(1, page.width * (noUpscale ? Math.min(1, scale) : scale));

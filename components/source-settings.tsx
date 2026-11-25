@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { Trash2 } from "lucide-react";
+import { uniqueId } from "@/lib/archiveStore";
 import { db } from "@/lib/dexieDB";
-import { DEFAULT_SOURCE_ID, SOURCES_CHANGED, SOURCES_KEY, fetchCatalog, getSources, normalizeSourceUrl, saveSources, type CatalogSource } from "@/lib/sources";
+import { DEFAULT_SOURCE_ID, SOURCES_CHANGED, SOURCES_KEY, fetchCatalog, filterActiveSources, getSources, normalizeSourceUrl, mergeCatalogs, saveSources, type CatalogSource } from "@/lib/sources";
 
 const button = "min-h-11 rounded-lg border px-4 text-sm font-medium disabled:opacity-50 hover:bg-accent";
 const field = "mt-1.5 w-full rounded-lg border bg-background p-2.5 text-sm focus-visible:outline-2 focus-visible:outline-ring";
@@ -29,13 +30,20 @@ export function SourceSettings({ onBusyChange }: { onBusyChange?: (busy: boolean
     try {
       const href = normalizeSourceUrl(url);
       if (getSources().some(source => source.url === href)) throw new Error("That source is already in your library.");
-      const source = { id: crypto.randomUUID().slice(0, 8), name: name.trim() || new URL(href).hostname, url: href };
+      const source = { id: uniqueId(), name: name.trim() || new URL(href).hostname, url: href };
       // Check it's reachable and readable before saving, so a typo doesn't silently add nothing.
-      await fetchCatalog(source);
-      const current = getSources();
-      if (current.some(item => item.url === href)) throw new Error("That source is already in your library.");
-      const next = [...current, source];
-      saveSources(next); setSources(next); setUrl(""); setName("");
+      const items = await fetchCatalog(source);
+      const next = await db.transaction("rw", "comics", async () => {
+        const current = getSources();
+        if (current.some(item => item.url === href)) throw new Error("That source is already in your library.");
+        const updated = [...current, source];
+        await db.comics.put({ id: `source:${source.id}`, content: items });
+        const root = await db.comics.get("root");
+        await db.comics.put({ id: "root", content: [...(root?.content ?? []), ...mergeCatalogs([{ source, items }])] });
+        return updated;
+      });
+      saveSources(next);
+      setUrl(""); setName("");
     } catch (err) {
       setError(err instanceof TypeError ? "Couldn't reach that URL. Check it, and that the server allows cross-origin requests (CORS)." : err instanceof Error ? err.message : String(err));
     } finally { setBusy(false); onBusyChange?.(false); }
@@ -44,12 +52,14 @@ export function SourceSettings({ onBusyChange }: { onBusyChange?: (busy: boolean
   async function remove(id: string) {
     setBusy(true); onBusyChange?.(true); setError(null);
     try {
-      saveSources(getSources().filter(source => source.id !== id));
-      await db.transaction("rw", "comics", async () => {
+      const remaining = await db.transaction("rw", "comics", async () => {
+        const next = getSources().filter(source => source.id !== id);
         await db.comics.delete(`source:${id}`);
         const root = await db.comics.get("root");
-        if (root) await db.storeComicsData(root.content);
+        if (root) await db.comics.put({ id: "root", content: filterActiveSources(root.content, next) });
+        return next;
       });
+      saveSources(remaining);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally { setBusy(false); onBusyChange?.(false); }

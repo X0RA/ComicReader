@@ -11,6 +11,9 @@ export async function verifyModel(data: ArrayBuffer, model: UpscaleModel): Promi
   const digest = await crypto.subtle.digest("SHA-256", data);
   return [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, "0")).join("") === model.sha256;
 }
+function prepareUpscaleRuntime() {
+  try { navigator.serviceWorker?.controller?.postMessage({ type: "UPSCALE_PREPARE" }); } catch { /* Optional offline runtime warming. */ }
+}
 /** Only verified weights enter persistent storage. Rendered pages never use this cache. */
 export async function loadUpscaleModel(model: UpscaleModel, signal: AbortSignal, progress: (fraction: number) => void): Promise<{ data: ArrayBuffer; warning?: string }> {
   return lock(CACHE_LOCK, "shared", signal, () => lock(`${CACHE_LOCK}:${model.sha256}`, "exclusive", signal, async () => {
@@ -23,7 +26,7 @@ export async function loadUpscaleModel(model: UpscaleModel, signal: AbortSignal,
       if (saved) {
         const data = await saved.arrayBuffer();
         signal.throwIfAborted();
-        if (await verifyModel(data, model)) { progress(1); return { data }; }
+        if (await verifyModel(data, model)) { prepareUpscaleRuntime(); progress(1); return { data }; }
         await cache.delete(key);
       }
     } catch (error) {
@@ -50,18 +53,27 @@ export async function loadUpscaleModel(model: UpscaleModel, signal: AbortSignal,
     signal.throwIfAborted();
     try { await cache?.put(key, new Response(data, { headers: { "Content-Type": "application/octet-stream", "Content-Length": String(data.length) } })); }
     catch { warning = "The model is ready, but browser storage is full. It may need downloading again next time."; }
+    prepareUpscaleRuntime();
     if (typeof window !== "undefined") window.dispatchEvent(new Event(MODEL_CACHE_CHANGED));
     signal.throwIfAborted();
     return { data: data.buffer, warning };
   }));
 }
 export async function clearUpscaleModels(): Promise<void> {
-  await lock(CACHE_LOCK, "exclusive", undefined, async () => { if (typeof caches !== "undefined") await caches.delete(MODEL_CACHE); });
+  await lock(CACHE_LOCK, "exclusive", undefined, async () => {
+    if (typeof caches === "undefined") return;
+    await caches.delete(MODEL_CACHE);
+    for (const name of await caches.keys()) {
+      if (name.startsWith("comic-reader-upscale-runtime-")) await caches.delete(name);
+    }
+  });
   if (typeof window !== "undefined") window.dispatchEvent(new Event(MODEL_CACHE_CHANGED));
 }
 export async function upscaleModelCacheSize(): Promise<number> {
-  if (typeof caches === "undefined" || !await caches.has(MODEL_CACHE)) return 0;
-  const cache = await caches.open(MODEL_CACHE);
-  const responses = await Promise.all((await cache.keys()).map(key => cache.match(key)));
-  return responses.reduce((sum, response) => sum + Number(response?.headers.get("Content-Length") || 0), 0);
+  return lock(CACHE_LOCK, "shared", undefined, async () => {
+    if (typeof caches === "undefined" || !await caches.has(MODEL_CACHE)) return 0;
+    const cache = await caches.open(MODEL_CACHE);
+    const responses = await Promise.all((await cache.keys()).map(key => cache.match(key)));
+    return responses.reduce((sum, response) => sum + Number(response?.headers.get("Content-Length") || 0), 0);
+  });
 }

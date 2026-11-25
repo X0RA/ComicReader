@@ -96,9 +96,25 @@ test('temporary transfer code moves a backup between isolated browsers and respo
 });
 
 test('transfer endpoint rejects invalid, oversized and foreign-origin requests', async ({ request }) => {
-  const invalid=await request.post('/api/transfer',{data:{action:'read',code:'bad'}});expect(invalid.status()).toBe(400);
-  const missing=await request.post('/api/transfer',{data:{action:'read',code:'00000-00000'}});expect(missing.status()).toBe(404);expect(await missing.text()).toContain('another instance');
-  const oversized=await request.post('/api/transfer',{data:{action:'create',payload:'j1.'+'a'.repeat(131000)}});expect(oversized.status()).toBe(413);
-  const proxied=await request.post('/api/transfer',{headers:{Origin:'https://comics.example','x-forwarded-host':'comics.example','x-forwarded-proto':'https'},data:{action:'create',payload:'j1.YWJj'}});expect(proxied.status()).toBe(200);
+  const headers = { Origin: 'http://127.0.0.1:4319' };
+  const absent = await request.post('/api/transfer', { data: {} }); expect(absent.status()).toBe(403);
+  const invalid=await request.post('/api/transfer',{headers,data:{action:'read',code:'bad'}});expect(invalid.status()).toBe(400);
+  const missing=await request.post('/api/transfer',{headers,data:{action:'read',code:'00000-00000'}});expect(missing.status()).toBe(404);expect(await missing.text()).toContain('another instance');
+  const oversized=await request.post('/api/transfer',{headers,data:{action:'create',payload:'j1.'+'a'.repeat(131000)}});expect(oversized.status()).toBe(413);
+  const proxied=await request.post('/api/transfer',{headers:{Origin:'https://comics.example','x-forwarded-host':'comics.example','x-forwarded-proto':'https'},data:{action:'create',payload:'j1.YWJj'}});expect(proxied.status()).toBe(403);
   const foreign=await request.post('/api/transfer',{headers:{Origin:'https://unrelated.example'},data:{action:'read',code:'00000-00000'}});expect(foreign.status()).toBe(403);
+});
+
+test('export repairs legacy display values and merging preserves an unknown page count', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const t = window.storageTest;
+    localStorage.setItem('theme', 'system');
+    await t.db.readComics.put({ id: 'unknown', status: 'in_progress', lastPage: 8, totalPages: 0 });
+    await t.db.readComics.put({ id: 'shortened', lastPage: 8, totalPages: 6 });
+    const backup = await t.exportBackup();
+    await t.importBackup(backup);
+    return { theme: backup.settings.theme, shortened: backup.progress.find((row: { id: string }) => row.id === 'shortened').lastPage,
+      total: (await t.db.readComics.get('unknown')).totalPages, repaired: (await t.db.readComics.get('shortened')).status };
+  });
+  expect(result).toEqual({ theme: 'light', shortened: 6, total: 0, repaired: 'in_progress' });
 });

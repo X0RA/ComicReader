@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './storage-context';
 import type { ReaderPage } from '../lib/reader-pages';
 import type { RenderResult } from '../lib/upscale/client';
 import type { UpscaleState } from '../lib/upscale/queue';

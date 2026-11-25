@@ -7,12 +7,11 @@ const headers = { "Cache-Control": "private, no-store, max-age=0", "CDN-Cache-Co
 export async function POST(request: Request) {
   try {
     const origin = request.headers.get("origin"), url = new URL(request.url);
-    // Next may construct request.url with an internal host behind its proxy.
-    const host = request.headers.get("x-forwarded-host")?.split(",")[0].trim() || request.headers.get("host") || url.host;
-    const protocol = request.headers.get("x-forwarded-proto")?.split(",")[0].trim() || url.protocol.slice(0, -1);
-    if (origin && origin !== `${protocol}://${host}`) throw new TransferError("Open this site's Backup & transfer page to transfer data.", 403);
-    if (!request.headers.get("content-type")?.startsWith("application/json")) throw new TransferError("Expected JSON transfer data.", 415);
-    cache.rateLimit((request.headers.get("x-forwarded-for")?.split(",")[0] || "local").trim().slice(0, 256));
+    const host = request.headers.get("host") || url.host;
+    const expected = process.env.TRANSFER_ORIGIN || `${process.env.VERCEL === "1" ? "https:" : url.protocol}//${host}`;
+    if (origin !== expected) throw new TransferError("Open this site's Backup & transfer page to transfer data.", 403);
+    if (request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") throw new TransferError("Expected JSON transfer data.", 415);
+    cache.rateLimit(process.env.VERCEL === "1" ? request.headers.get("x-vercel-forwarded-for") || "shared" : "shared");
     if (Number(request.headers.get("content-length")) > 130_000) throw new TransferError("Transfer is too large. Use a JSON file.", 413);
     if (!request.body) throw new TransferError("Missing transfer data.", 400);
     const reader = request.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;

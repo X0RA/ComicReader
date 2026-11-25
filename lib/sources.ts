@@ -41,7 +41,7 @@ export function parseCatalog(raw: unknown): ContentItem[] {
   function validate(value: unknown): asserts value is ContentItem[] {
     if (!Array.isArray(value)) throw new Error("This doesn't look like a comic catalog.");
     for (const item of value) {
-      if (!item || typeof item !== "object" || typeof item.id !== "string" || !item.id.trim()
+      if (!item || typeof item !== "object" || typeof item.id !== "string" || !item.id.trim() || [".", ".."].includes(item.id)
         || typeof item.name !== "string" || !item.name.trim() || ids.has(item.id)) {
         throw new Error("Every catalog entry needs a unique string ID and a name.");
       }
@@ -50,6 +50,8 @@ export function parseCatalog(raw: unknown): ContentItem[] {
       else if (item.type !== "file" || typeof item.link !== "string" || !item.link.trim()
         || typeof item.extension !== "string" || !item.extension.trim()) {
         throw new Error("Every comic needs a file type, link, and extension.");
+      } else if (item.size !== undefined && (!Number.isSafeInteger(item.size) || item.size < 0)) {
+        throw new Error("Comic sizes must be nonnegative whole bytes.");
       }
     }
   }

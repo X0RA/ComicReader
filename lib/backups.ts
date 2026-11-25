@@ -31,7 +31,7 @@ function list(value: unknown): unknown[] {
 function position(value: unknown): LastRead | undefined {
   if (value === undefined) return undefined;
   const row = object(value);
-  return { id: text(row.id, "comic or folder ID", 1024), timestamp: integer(row.timestamp, "timestamp") };
+  return { id: text(row.id, "comic or folder ID", MAX_BACKUP_BYTES), timestamp: integer(row.timestamp, "timestamp") };
 }
 /** Construct only known fields. Validate the entire file before any storage writes. */
 export function validateBackup(input: unknown): ReaderBackup {
@@ -43,7 +43,7 @@ export function validateBackup(input: unknown): ReaderBackup {
   if (!["light", "dark", "gruvbox"].includes(settings.theme as string)) throw new Error("Invalid theme in backup.");
   const bookmarks = list(data.bookmarks).map(value => {
     const row = object(value);
-    return { comicId: text(row.comicId, "comic ID", 1024), comicName: text(row.comicName, "comic name", 4096),
+    return { comicId: text(row.comicId, "comic ID", MAX_BACKUP_BYTES), comicName: text(row.comicName, "comic name", 4096),
       page: integer(row.page, "bookmark page", 1), note: text(row.note, "bookmark note", 2000, true),
       createdAt: integer(row.createdAt, "bookmark creation date"), updatedAt: integer(row.updatedAt, "bookmark update date") };
   });
@@ -52,7 +52,7 @@ export function validateBackup(input: unknown): ReaderBackup {
     if (!["unread", "in_progress", "completed"].includes(row.status as string)) throw new Error("Invalid reading status in backup.");
     const lastPage = integer(row.lastPage, "last page"), totalPages = integer(row.totalPages, "page count");
     if (totalPages && lastPage > totalPages) throw new Error("Reading progress exceeds the page count.");
-    return { id: text(row.id, "comic ID", 1024), status: row.status as ReadComic["status"], lastPage, totalPages };
+    return { id: text(row.id, "comic ID", MAX_BACKUP_BYTES), status: row.status as ReadComic["status"], lastPage, totalPages };
   });
   const nav = object(data.navigation ?? {});
   return { format: "comic-reader-backup", version: 1, exportedAt,
@@ -66,18 +66,35 @@ export function parseBackup(json: string): ReaderBackup {
   return validateBackup(data);
 }
 const latest = (rows: LastRead[]) => rows.sort((a, b) => b.timestamp - a.timestamp)[0];
+function savedCount(value: number | undefined) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+function savedProgress(row: ReadComic): ReadComic {
+  const totalPages = savedCount(row.totalPages);
+  const page = savedCount(row.lastPage);
+  const lastPage = totalPages ? Math.min(page, totalPages) : page;
+  const status = row.status === "completed" || row.status === "in_progress" || row.status === "unread"
+    ? row.status : lastPage ? "in_progress" : "unread";
+  return { id: row.id, status, lastPage, totalPages };
+}
 export async function exportBackup(phone = false): Promise<ReaderBackup> {
   const reader = parseReaderSettings(localStorage.getItem(READER_SETTINGS_KEY), phone);
-  const theme = localStorage.getItem("theme") ?? "light";
+  const savedTheme = localStorage.getItem("theme");
+  const theme = savedTheme === "gruvbox" || savedTheme === "dark" ? savedTheme : "light";
   const snapshot = await db.transaction("r", [db.bookmarks, db.readComics, db.lastReadComic, db.lastFolder], async () => ({
-    bookmarks: await db.bookmarks.toArray(), progress: await db.readComics.toArray(),
+    bookmarks: (await db.bookmarks.toArray()).map(row => ({
+      ...row, comicName: (row.comicName?.trim() || row.comicId).slice(0, 4096), note: (row.note ?? "").slice(0, 2000),
+      createdAt: savedCount(row.createdAt), updatedAt: savedCount(row.updatedAt),
+    })),
+    progress: (await db.readComics.toArray()).map(savedProgress),
     navigation: { lastComic: latest(await db.lastReadComic.toArray()), lastFolder: latest(await db.lastFolder.toArray()) },
   }));
   return parseBackup(JSON.stringify({ format: "comic-reader-backup", version: 1, exportedAt: new Date().toISOString(), settings: { reader, theme }, ...snapshot }));
 }
 function mergeProgress(a: ReadComic | undefined, b: ReadComic): ReadComic {
   if (!a) return b;
-  const lastPage = Math.max(a.lastPage, b.lastPage), totalPages = Math.max(a.totalPages, b.totalPages, lastPage);
+  const lastPage = Math.max(a.lastPage, b.lastPage);
+  const totalPages = (a.totalPages || b.totalPages) ? Math.max(a.totalPages, b.totalPages, lastPage) : 0;
   const status = a.status === "completed" || b.status === "completed" ? "completed"
     : a.status === "in_progress" || b.status === "in_progress" || lastPage > 0 ? "in_progress" : "unread";
   return { id: b.id, lastPage, totalPages, status };
@@ -104,7 +121,7 @@ export async function importBackup(input: unknown): Promise<ImportResult> {
       const merged = new Map<string, ReadComic>();
       for (const row of backup.progress) merged.set(row.id, mergeProgress(merged.get(row.id), row));
       for (const row of merged.values()) {
-        const existing = await db.readComics.get(row.id), next = mergeProgress(existing, row);
+        const existing = await db.readComics.get(row.id), next = mergeProgress(existing && savedProgress(existing), row);
         if (!existing || existing.status !== next.status || existing.lastPage !== next.lastPage || existing.totalPages !== next.totalPages) {
           await db.readComics.put(next); result.progressUpdated++;
         }

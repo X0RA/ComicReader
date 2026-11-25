@@ -6,7 +6,7 @@ A web-based comic reader built with Next.js, React, TypeScript, and Tailwind CSS
 - Read in a responsive, vertically scrolling layout with previous/next comic navigation.
 - Automatically track your current page and reading status, then resume where you left off.
 - Bookmark pages with optional notes, browse them across comics, or open the current comic's bookmark sidebar.
-- Zoom at the mouse pointer with the desktop mouse wheel, drag to pan, and reset to your reading size.
+- Zoom at the mouse pointer with Alt (Option on Mac) and the desktop mouse wheel, drag to pan, and reset to your reading size.
 - Manually upscale nearby pages with Anime4K, Real-ESRGAN Anime v3, Real-CUGAN, or AnimeSharp V3, with pause/resume and 1–3 parallel jobs.
 - Return to your last-opened folder and manage downloaded comics.
 
@@ -46,8 +46,8 @@ On iPhone/iPad, perform setup and downloads inside the installed Home Screen
 app; its storage may be separate from a Safari tab. Browser storage still needs
 space and can be cleared by the user or browser. Storage has a **Request
 persistent storage** button. Catalog refreshes, new comic/model downloads,
-and server transfer codes require a connection. GPU upscaling also needs its
-runtime loaded online; basic reading and border cropping work fully offline.
+and server transfer codes require a connection. Offline upscaling uses the cached
+runtime and requires a previously downloaded model and supported GPU.
 
 Deploy with **`npm run build`** (including its `postbuild` lifecycle), then
 `npm start` or Vercel. Offline support requires HTTPS, or localhost for testing;
@@ -57,9 +57,11 @@ The build generates a small standalone React interface using the same reader
 and library components. A versioned service worker caches that interface,
 styles, fonts, and icons, and serves it on failed document navigations. This
 avoids requiring Next server navigation responses for unvisited comic URLs.
-Comic archives remain in their existing IndexedDB/OPFS stores. Processed pages
-are not persisted. Updates install a complete new interface before activation,
-wait for existing tabs to close, and remove only older app-interface caches.
+Comic archives remain in their existing IndexedDB/OPFS stores. The reader saves
+a small cover thumbnail with the download when it prepares page one, so returning
+to the library does not require reopening the archive. Updates install a complete new interface before activation,
+claim open tabs, and retain the previous interface cache for in-flight assets.
+Once in the offline interface, links and Back work locally. Reload to reconnect.
 Missing interface assets are repaired on the next online launch.
 
 Production offline tests (build first):
@@ -96,9 +98,10 @@ weights and rendered images are excluded.
 
 - **JSON:** download or import a versioned backup file (up to 10 MiB).
 - **Import link:** compressed, URL-safe Base64 data in `/import#...`. Opening it
-  imports automatically, then removes the payload from the address bar. The
+  asks for confirmation before importing, then removes the payload from the address bar. The
   fragment is not sent in HTTP requests. `/import/<payload>` is also supported
-  for shorter links, but request-length limits apply to that form. Links are
+  for existing links. That older form sends the payload in the initial request
+  before redirecting to the fragment form. Links are
   capped at 128,000 payload characters; larger backups should use JSON files.
 - **Temporary code (experimental):** create a code, then enter it on another
   device's Backup & transfer page on the same site. Data is held only in server
@@ -118,7 +121,9 @@ only. Vercel can route another request to a different instance or restart it;
 there is **no guarantee** a valid code will be found, even before expiry. Use
 JSON or a self-contained link when that happens. A durable shared store would
 be required to guarantee cross-instance retrieval. Responses are `no-store`;
-entries, bytes, request bodies and per-client attempts are bounded. Payloads
+entries, bytes, request bodies and request counts are bounded. Outside Vercel,
+the process uses a shared rate limit. Behind a TLS-terminating proxy set
+`TRANSFER_ORIGIN` to the public origin, for example `https://comics.example`. Payloads
 are not logged by application code. Creating a new code does not renew an old
 one, and retrieval does not extend expiry.
 

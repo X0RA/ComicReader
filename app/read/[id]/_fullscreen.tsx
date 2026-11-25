@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Maximize, Minimize } from "lucide-react";
 import styles from "./reader.module.css";
 
-export function useReaderFullscreen() {
+function useFullscreenState() {
   const [active, setActive] = useState(false);
   const [supported, setSupported] = useState(false);
   const [error, setError] = useState("");
@@ -39,7 +39,21 @@ export function useReaderFullscreen() {
       setError("Fullscreen could not be changed. Your browser may not allow it here.");
     } finally { pending.current = false; }
   }, []);
-  return { active, supported, error, toggle };
+  const dismissError = useCallback(() => setError(""), []);
+  return { active, supported, error, toggle, dismissError };
+}
+
+const FullscreenContext = createContext<ReturnType<typeof useFullscreenState> | null>(null);
+
+export function ReaderFullscreenProvider({ children }: { children: ReactNode }) {
+  const fullscreen = useFullscreenState();
+  return <FullscreenContext.Provider value={fullscreen}>{children}</FullscreenContext.Provider>;
+}
+
+export function useReaderFullscreen() {
+  const fullscreen = useContext(FullscreenContext);
+  if (!fullscreen) throw new Error("Reader fullscreen requires the reader layout.");
+  return fullscreen;
 }
 
 export function ReaderToolbar({ fullscreen, children }: { fullscreen: ReturnType<typeof useReaderFullscreen>; children: ReactNode }) {

@@ -72,8 +72,9 @@ export default function ViewOptions({ settings: s, change, reset, onClose, phone
         <Section title="Navigation">
           <Segment label="Tap zones" value={s.tapZones} options={[["off", "Off"], ["sides", "Sides"], ["vertical", "Top & bottom"]]} onChange={tapZones => change({ tapZones })} />
           {s.tapZones !== "off" && toggle("swapTapZones", "Swap tap zones")}
-          {!phone && <p className="text-xs leading-relaxed text-muted-foreground">Scroll the mouse wheel over a page to zoom at the pointer. Drag to pan while zoomed; use Reset zoom to return to your reading size.</p>}
+          {!phone && <p className="text-xs leading-relaxed text-muted-foreground">Hold Alt (Option on Mac) and scroll over a page to zoom at the pointer. Drag to pan while zoomed; use Reset zoom to return to your reading size.</p>}
           {!webtoon && <>
+            {!phone && <Segment label="Mouse wheel" value={s.wheel} options={[["scroll", "Scroll"], ["turn", "Turn page"]]} onChange={wheel => change({ wheel })} />}
             <Segment label="Page transition" value={s.transition} options={[["none", "None"], ["slide", "Slide"], ["fade", "Fade"]]} onChange={transition => change({ transition })} /></>}
           {webtoon && <Range label="Auto-scroll speed" value={s.autoScroll} min={0} max={10} unit="×" onChange={autoScroll => change({ autoScroll })} />}
           {toggle("autoAdvance", "Open next chapter at end")}

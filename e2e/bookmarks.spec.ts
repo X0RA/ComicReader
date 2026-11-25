@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './storage-context';
 
 test.beforeEach(async ({ page }) => { await page.goto('/'); await page.waitForFunction(() => !!window.storageTest); });
 

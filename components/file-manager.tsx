@@ -227,16 +227,15 @@ function ReadStateIndicator({ file }: { file: FileItem }) {
   )
 }
 
-function FileRow({ file, onOpen }: { file: FileItem; onOpen: (file: FileItem) => void }) {
+function FileRow({ file }: { file: FileItem }) {
   const { title, number, metadata } = parseComicName(file.name, file.extension)
   const showPages = file.readStatus === "in_progress" && !!file.lastPage
 
   return (
     <Link
-      href={`/read/${file.id}`}
+      href={`/read/${encodeURIComponent(file.id)}`}
       prefetch={false}
       title={file.name}
-      onClick={() => onOpen(file)}
       className="flex min-h-16 items-center gap-3 px-1 py-2 outline-none transition-colors hover:bg-accent/50 focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50 sm:gap-5 sm:px-3"
     >
       <span className="min-w-7 shrink-0 font-mono text-sm text-muted-foreground">{number}</span>
@@ -341,18 +340,7 @@ export function FileManager({ data, className, lastFolderId = "0" }: FileManager
     window.scrollTo({ top: 0 })
 
     // Update last folder in DB
-    db.setLastFolder(folderId)
-  }
-
-  const handleFileClick = (file: FileItem) => {
-    // Use markComicStatus instead of the non-existent markComicAsRead
-
-    const file_status = file.readStatus? file.readStatus : "in_progress"
-    const last_page = file.lastPage? file.lastPage : 0
-    db.markComicStatus(file.id, file_status, last_page, file.totalPages ?? 0)
-
-    // Set as last read comic
-    db.setLastReadComic(file.id)
+    void db.setLastFolder(folderId).catch(console.warn)
   }
 
   // Toggle sort direction or change sort key
@@ -422,7 +410,7 @@ export function FileManager({ data, className, lastFolderId = "0" }: FileManager
                     onOpen={(folder) => navigateToFolder(folder.id)}
                   />
                 ) : (
-                  <FileRow file={item} onOpen={handleFileClick} />
+                  <FileRow file={item} />
                 )}
               </li>
             ))}

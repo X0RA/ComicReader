@@ -9,7 +9,7 @@ export async function saveBookmark(bookmark: Pick<ComicBookmark, "comicId" | "co
   await db.transaction("rw", db.bookmarks, async () => {
     const previous = await db.bookmarks.get([bookmark.comicId, bookmark.page]);
     const now = Date.now();
-    await db.bookmarks.put({ ...bookmark, note: bookmark.note.trim().slice(0, 2000), createdAt: previous?.createdAt ?? now, updatedAt: now });
+    await db.bookmarks.put({ ...bookmark, comicName: bookmark.comicName.slice(0, 4096), note: bookmark.note.trim().slice(0, 2000), createdAt: previous?.createdAt ?? now, updatedAt: now });
   });
 }
 

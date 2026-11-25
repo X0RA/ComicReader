@@ -2,7 +2,6 @@
 
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { isOfflineReading } from "@/lib/offline";
 import { useRouter } from "next/navigation";
 import { Bookmark, BookmarkPlus, ChevronLeft, ChevronRight, PanelRight, SlidersHorizontal } from "lucide-react";
 import { ThemeSwitcher } from "@/components/theme-controls";
@@ -54,7 +53,7 @@ function Reader({ id, chapter, pages, initialPage, prepared, preparing, prioriti
   const view = useRef<ComicViewHandle>(null);
   const idle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const manuallyHidden = useRef(false);
-  const navigating = useRef(false);
+
   const started = useRef(0);
   const complete = useRef(false);
   const wakeStatus = useReaderWakeLock(ready && settings.keepAwake);
@@ -78,8 +77,8 @@ function Reader({ id, chapter, pages, initialPage, prepared, preparing, prioriti
     bookmarkState.bookmarks.find(bookmark => bookmark.page === number) ?? {
       comicId: id, comicName: chapter.comic.name.replace(/\.(cbz|zip)$/i, ""), page: number, note: "", createdAt: 0, updatedAt: 0,
     });
-  const latest = useRef({ page, lastPage });
-  latest.current = { page, lastPage };
+  const latest = useRef({ page, lastPage, ready: false });
+  latest.current = { page, lastPage, ready: ready && visibleReady };
   useEffect(() => { prioritize(currentPage); }, [currentPage, prioritize]);
 
   const activity = useCallback(() => {
@@ -107,23 +106,35 @@ function Reader({ id, chapter, pages, initialPage, prepared, preparing, prioriti
   useEffect(() => { if (panel) { manuallyHidden.current = false; clearTimeout(idle.current); setControls(true); } else activity(); }, [panel, activity]);
   useEffect(() => { setAutoPaused(false); }, [settings.autoScroll]);
 
+  const pendingNavigation = useRef<{ url: string; at: number } | undefined>(undefined);
+  const navigate = useCallback((url: string, preserveFullscreen = false) => {
+    const now = performance.now();
+    if (pendingNavigation.current?.url === url && now - pendingNavigation.current.at < 3500) return;
+    pendingNavigation.current = { url, at: now };
+    const keepFullscreen = preserveFullscreen && !!document.fullscreenElement && navigator.onLine;
+    if (!document.documentElement.dataset.offlineApp && !keepFullscreen && (navigator.serviceWorker?.controller || !navigator.onLine)) {
+      location.assign(url);
+    } else {
+      router.push(url);
+    }
+  }, [router]);
+
   const chapterNavigation = useCallback((direction: number) => {
     const target = direction < 0 ? chapter.previous : chapter.next;
-    if (!target || navigating.current) return;
-    navigating.current = true;
-    const url = `/read/${encodeURIComponent(target.id)}`;
-    if (isOfflineReading()) location.assign(url); else router.push(url);
-  }, [chapter, router]);
+    if (!target) return;
+    navigate(`/read/${encodeURIComponent(target.id)}`, true);
+  }, [chapter, navigate]);
   const atEnd = useCallback(() => {
     // Do not auto-advance merely because a restored page is already at the end.
-    if (panel || bookmarkEditor || performance.now() - started.current < 1000) return;
+    if (panel || bookmarksOpen || bookmarkEditor || performance.now() - started.current < 1000) return;
     if (pages[pages.length - 1].status === "pending") { prioritize(pages.length); return; }
     complete.current = true;
-    latest.current = { page: pages.length, lastPage: pages.length };
+    latest.current = { page: pages.length, lastPage: pages.length, ready: true };
     setCurrentPage(pages.length);
+    if (settings.autoScroll > 0) setAutoPaused(true);
     if (settings.autoAdvance && chapter.next) chapterNavigation(1);
-    else if (settings.autoScroll > 0) { setAutoPaused(true); activity(); }
-  }, [panel, bookmarkEditor, settings.autoAdvance, settings.autoScroll, chapter.next, chapterNavigation, activity, pages, prioritize]);
+    else if (settings.autoScroll > 0) activity();
+  }, [panel, bookmarksOpen, bookmarkEditor, settings.autoAdvance, settings.autoScroll, chapter.next, chapterNavigation, activity, pages, prioritize]);
   const jump = useCallback((target: number) => {
     const next = Math.min(pages.length, Math.max(1, target));
     spreadAnchor.current = { policy: spreadPolicy, pages: groups.find(group => group.includes(next)) ?? [next] };
@@ -140,7 +151,7 @@ function Reader({ id, chapter, pages, initialPage, prepared, preparing, prioriti
   }, [groupIndex, groups, settings.autoAdvance, chapterNavigation, jump]);
 
   const onTap = (x: number, y: number) => {
-    if (panel || bookmarkEditor) return;
+    if (panel || bookmarksOpen || bookmarkEditor) return;
     if (viewport.phone) manuallyHidden.current = false;
     activity();
     if (settings.autoScroll > 0 && !autoPaused && !paged) { setAutoPaused(true); return; }
@@ -158,7 +169,7 @@ function Reader({ id, chapter, pages, initialPage, prepared, preparing, prioriti
     return () => clearTimeout(timer);
   }, [id, page, lastPage, pages.length, visibleReady, ready]);
   useEffect(() => {
-    const flush = () => { void saveProgress(id, latest.current.page, pages.length, complete.current).catch(() => {}); };
+    const flush = () => { if (!latest.current.ready) return; void saveProgress(id, latest.current.page, pages.length, complete.current).catch(() => {}); };
     const visibility = () => { if (document.visibilityState === "hidden") flush(); };
     window.addEventListener("pagehide", flush);
     document.addEventListener("visibilitychange", visibility);
@@ -168,7 +179,7 @@ function Reader({ id, chapter, pages, initialPage, prepared, preparing, prioriti
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (event.key === "Escape" && document.fullscreenElement) return;
-      if (panel || bookmarkEditor || event.altKey || event.ctrlKey || event.metaKey || (event.target instanceof HTMLElement && event.target.closest('input, select, textarea, [contenteditable="true"]'))) return;
+      if (panel || bookmarksOpen || bookmarkEditor || event.altKey || event.ctrlKey || event.metaKey || (event.target instanceof HTMLElement && event.target.closest('input, select, textarea, [contenteditable="true"]'))) return;
       if (event.key === " " && event.target instanceof HTMLElement && event.target.closest("button, a")) return;
       const rtl = paged && settings.direction === "rtl";
       if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown", " ", "Escape"].includes(event.key)) {
@@ -187,9 +198,12 @@ function Reader({ id, chapter, pages, initialPage, prepared, preparing, prioriti
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [panel, bookmarkEditor, paged, settings.direction, activity, turn, jump, pages.length, viewport.height, atEnd, hideControls]);
+  }, [panel, bookmarksOpen, bookmarkEditor, paged, settings.direction, activity, turn, jump, pages.length, viewport.height, atEnd, hideControls]);
 
-  const back = () => { void db.setLastFolder(chapter.folderId).catch(() => {}).then(() => { if (isOfflineReading()) location.assign("/"); else router.push("/"); }); };
+  const back = async () => {
+    await db.setLastFolder(chapter.folderId).catch(console.warn);
+    navigate("/");
+  };
   const canPrevious = groupIndex > 0;
   const canNext = groupIndex < groups.length - 1 || (settings.autoAdvance && !!chapter.next);
   const rtl = paged && settings.direction === "rtl";
@@ -206,13 +220,13 @@ function Reader({ id, chapter, pages, initialPage, prepared, preparing, prioriti
       <button type="button" onClick={() => setPanel(true)} aria-label="View options" aria-haspopup="dialog" aria-expanded={panel} className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-muted-foreground hover:bg-secondary focus-visible:outline-2 focus-visible:outline-ring ${panel ? "bg-secondary text-foreground" : ""}`}><SlidersHorizontal size={19} /></button>
       <ThemeSwitcher />
     </ReaderToolbar>
-    {fullscreen.error && <p role="status" className="fixed inset-x-3 top-[72px] z-40 mx-auto max-w-lg rounded-xl border bg-card p-3 text-sm">{fullscreen.error}</p>}
+    {fullscreen.error && <p role="status" className="fixed inset-x-3 top-[72px] z-40 mx-auto max-w-lg rounded-xl border bg-card p-3 text-sm">{fullscreen.error} <button type="button" className="p-2 underline" onClick={fullscreen.dismissError}>Dismiss</button></p>}
     <div className="absolute inset-x-0 bottom-0" style={{ top: fullscreen.active ? 0 : 60 }}>
-      {ready && <ComicView ref={view} pages={pages} enhanced={upscaling.state.images} settings={settings} layout={layout} visiblePages={visiblePages} currentPage={currentPage} width={viewport.width} height={viewport.height - (fullscreen.active ? 0 : 60)} phone={viewport.phone} panelOpen={panel || !!bookmarkEditor} turnDirection={turnDirection} onPage={setCurrentPage}
+      {ready && <ComicView ref={view} pages={pages} enhanced={upscaling.state.images} settings={settings} layout={layout} visiblePages={visiblePages} currentPage={currentPage} width={viewport.width} height={viewport.height - (fullscreen.active ? 0 : 60)} phone={viewport.phone} panelOpen={panel || bookmarksOpen || !!bookmarkEditor} turnDirection={turnDirection} onPage={setCurrentPage}
         onScrollDirection={direction => { if (!viewport.phone) return; if (direction < 0) activity(); else if (!panel) setControls(false); }} onTap={onTap} onTurn={turn} onEnd={atEnd} autoRunning={settings.autoScroll > 0 && !autoPaused && pages[currentPage - 1].status !== "pending"} />}
     </div>
     {(progressError || (warning && !dismissWarning)) && <div role="status" className="fixed inset-x-3 top-[72px] z-30 mx-auto flex max-w-lg items-center gap-3 rounded-xl border bg-card p-3 text-xs shadow-lg"><span className="flex-1">{progressError ? "Reading progress could not be saved. Browser storage may be full." : warning}</span>{!progressError && <button type="button" onClick={() => setDismissWarning(true)} className="min-h-11 px-2 text-primary">Dismiss</button>}</div>}
-    {paged && (!viewport.phone || controls) && !panel && <div className="pointer-events-none fixed inset-x-3 top-1/2 z-20 hidden justify-between sm:flex">
+    {paged && (!viewport.phone || controls) && !panel && !bookmarksOpen && <div className="pointer-events-none fixed inset-x-3 top-1/2 z-20 hidden justify-between sm:flex">
       <div className={viewport.phone ? "pointer-events-auto" : styles.desktopTurn}>
         <ReaderIconButton label={rtl ? "Next page" : "Previous page"} disabled={rtl ? !canNext : !canPrevious} onClick={() => turn(rtl ? 1 : -1)} className="pointer-events-auto rounded-full bg-card/80 text-foreground shadow-lg backdrop-blur"><ChevronLeft size={20} /></ReaderIconButton>
       </div>
@@ -220,7 +234,7 @@ function Reader({ id, chapter, pages, initialPage, prepared, preparing, prioriti
         <ReaderIconButton label={rtl ? "Previous page" : "Next page"} disabled={rtl ? !canPrevious : !canNext} onClick={() => turn(rtl ? -1 : 1)} className="pointer-events-auto rounded-full bg-card/80 text-foreground shadow-lg backdrop-blur"><ChevronRight size={20} /></ReaderIconButton>
       </div>
     </div>}
-    <div hidden={panel} className={viewport.phone ? undefined : styles.desktopControls} onPointerEnter={resetDesktopControls} onPointerLeave={resetDesktopControls}>
+    <div hidden={panel || bookmarksOpen} className={viewport.phone ? undefined : styles.desktopControls} onPointerEnter={resetDesktopControls} onFocus={resetDesktopControls} tabIndex={!viewport.phone && !controls ? 0 : undefined} aria-label={!controls ? "Show reader controls" : undefined}>
       <ComicOverlay visible={controls && !panel} page={page} lastVisiblePage={lastPage} total={pages.length} paged={paged} rtl={rtl} previousChapter={!!chapter.previous} nextChapter={!!chapter.next} canPrevious={canPrevious} canNext={canNext} jump={jump} turn={turn} chapter={chapterNavigation} hide={hideControls} activity={activity} autoScroll={settings.autoScroll} autoPaused={autoPaused} toggleAuto={() => { setAutoPaused(value => !value); activity(); }} />
     </div>
     <p className="sr-only" aria-live="polite" aria-atomic="true">Page {page}{lastPage > page ? ` to ${lastPage}` : ""} of {pages.length}</p>
@@ -241,6 +255,8 @@ export default function ReadFilePage({ params, searchParams }: { params: Promise
   const requestedPage = typeof requested === "string" && /^\d+$/.test(requested) && Number.isSafeInteger(Number(requested)) && Number(requested) > 0 ? Number(requested) : undefined;
   const [retry, setRetry] = useState(0);
   const fullscreen = useReaderFullscreen();
+  const { dismissError } = fullscreen;
+  useEffect(dismissError, [id, dismissError]);
   const comic = useComic(id, retry, requestedPage);
   if (comic.loading || comic.error || !comic.chapter) return <main className="flex min-h-dvh flex-col bg-background font-sans text-foreground">
     <header className="flex h-[60px] items-center gap-3 border-b px-4"><Link href="/" aria-label="Back to library" className="flex h-11 w-11 items-center justify-center rounded-xl text-muted-foreground hover:bg-secondary"><ChevronLeft size={19} /></Link><h1 className="min-w-0 flex-1 truncate text-sm font-medium">{comic.chapter ? comicTitle(comic.chapter.comic.name) : "Reader"}</h1><ThemeSwitcher /></header>

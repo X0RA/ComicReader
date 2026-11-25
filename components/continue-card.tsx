@@ -3,55 +3,19 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { BookOpen, Play } from "lucide-react"
-import { getComicDownloadStatus, readStored } from "@/lib/downloads"
-import { namedLock, leaseKey } from "@/lib/archiveStore"
+import { getComicDownloadStatus } from "@/lib/downloads"
 import { parseComicName } from "@/lib/comic-name"
-import { archiveImageNames } from "@/lib/reader-pages"
-
-// JSZip reads the whole archive into memory, so very large downloads skip the thumbnail.
-const MAX_COVER_ARCHIVE_BYTES = 512 * 1024 * 1024
-
-async function extractCachedCover(comicId: string): Promise<Blob | null> {
-  return namedLock(leaseKey(comicId), async () => {
-    const row = await getComicDownloadStatus(comicId)
-    if (!row || row.status !== "completed") return null
-    const archive = await readStored(row)
-    if (!archive || archive.size > MAX_COVER_ARCHIVE_BYTES) return null
-
-    const { default: JSZip } = await import("jszip")
-    const zip = await JSZip.loadAsync(archive)
-    const fileNames = Object.keys(zip.files).filter((fileName) => !zip.files[fileName].dir)
-    // Same ordering as the reader, so the thumbnail is its first page.
-    const [firstPage] = archiveImageNames(fileNames)
-    return firstPage ? zip.files[firstPage].async("blob") : null
-  }, "shared")
-}
 
 function useCachedCover(comicId: string) {
-  const [coverUrl, setCoverUrl] = useState<string | null>(null)
-
+  const [cover, setCover] = useState<{ id: string; url?: string }>()
   useEffect(() => {
-    let cancelled = false
-    let objectUrl: string | null = null
-
-    extractCachedCover(comicId)
-      .then((cover) => {
-        if (cancelled || !cover) return
-        objectUrl = URL.createObjectURL(cover)
-        setCoverUrl(objectUrl)
-      })
-      .catch((error) => {
-        console.error("Failed to read cached cover:", error)
-      })
-
-    return () => {
-      cancelled = true
-      setCoverUrl(null)
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
-    }
+    let active = true
+    void getComicDownloadStatus(comicId).then(row => {
+      if (active) setCover({ id: comicId, url: row?.status === "completed" ? row.coverThumbnail : undefined })
+    }).catch(console.warn)
+    return () => { active = false }
   }, [comicId])
-
-  return coverUrl
+  return cover?.id === comicId ? cover.url : undefined
 }
 
 interface ContinueCardProps {
@@ -78,7 +42,7 @@ export function ContinueCard({ comic }: ContinueCardProps) {
 
   return (
     <Link
-      href={`/read/${comic.id}`}
+      href={`/read/${encodeURIComponent(comic.id)}`}
       prefetch={false}
       title={comic.name}
       aria-label={`Continue reading ${title}, ${spokenProgress}`}
@@ -86,7 +50,7 @@ export function ContinueCard({ comic }: ContinueCardProps) {
     >
       <div className="flex h-[68px] w-12 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted text-muted-foreground sm:h-[92px] sm:w-16">
         {showCover ? (
-          // eslint-disable-next-line @next/next/no-img-element -- local object URL from the cached archive
+          // eslint-disable-next-line @next/next/no-img-element -- local thumbnail from the downloaded comic
           <img
             src={coverUrl}
             alt=""

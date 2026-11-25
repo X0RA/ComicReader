@@ -14,13 +14,14 @@ function cancellationChannel() {
   }
   return channel;
 }
-interface Transfer { controller: AbortController; promise: Promise<void>; users: number }
+interface Transfer { id: string; background: boolean; controller: AbortController; promise: Promise<void>; users: number }
+const pendingTransfers = new Set<Promise<void>>();
 const active = new Map<string, Transfer>();
 export const getComicDownloadStatus = (id: string) => db.downloads.get(id);
 export const getDownloadedComics = () => db.downloads.where('status').equals('completed').toArray();
 export async function storageInfo() {
   const estimate = await navigator.storage?.estimate?.().catch(() => ({} as StorageEstimate)) ?? {};
-  return { ...estimate, budget: Math.min(2 * 1024 ** 3, estimate.quota ? estimate.quota / 4 : Infinity),
+  return { ...estimate, budget: Math.min(2 * 1024 ** 3, estimate.quota !== undefined ? estimate.quota / 4 : Infinity),
     persistent: await navigator.storage?.persisted?.().catch(() => false) ?? false };
 }
 export async function readStored(row: DownloadRecord): Promise<Blob> {
@@ -34,6 +35,7 @@ export async function removeStored(row: DownloadRecord) {
     await db.downloads.delete(row.id);
     await db.comicDownloads.delete(row.id);
   }));
+  if ((row.archiveFile || row.pendingFile) && !await supportsOPFS()) return;
   if (row.archiveFile) await removeArchive(row.archiveFile);
   if (row.pendingFile) await removeArchive(row.pendingFile);
 }
@@ -54,12 +56,12 @@ export async function enforceBudget(protectedId?: string) {
     }));
   }
 }
-async function fetchHeaders(url: string, signal: AbortSignal) {
+async function fetchHeaders(url: string, signal: AbortSignal, maxRetries = 2) {
   for (let attempt = 0; ; attempt++) {
     signal.throwIfAborted();
     try { return await fetch(url, { signal }); }
     catch (error) {
-      if (signal.aborted || attempt === 2) throw error;
+      if (signal.aborted || attempt === maxRetries) throw error;
       await new Promise<void>((resolve, reject) => {
         const abort = () => { clearTimeout(timer); reject(signal.reason); };
         const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, 250 * 2 ** attempt);
@@ -68,7 +70,8 @@ async function fetchHeaders(url: string, signal: AbortSignal) {
     }
   }
 }
-async function transfer(comic: ComicSource, controller: AbortController, background: boolean) {
+async function transfer(comic: ComicSource, item: Transfer) {
+  const { controller } = item;
   const signal = controller.signal;
   // Fast path avoids waiting for a migration of an already readable archive.
   const cached = await namedLock(leaseKey(comic.id), async () => {
@@ -95,14 +98,15 @@ async function transfer(comic: ComicSource, controller: AbortController, backgro
       timer = setTimeout(() => controller.abort(new Error('Download stalled. Please try again.')), ms);
     };
     try {
-      watchdog(90_000);
-      const response = await fetchHeaders(comic.url, signal);
+      const hasFallback = saved?.status === 'completed';
+      watchdog(hasFallback ? 10_000 : 90_000);
+      const response = await fetchHeaders(comic.url, signal, hasFallback ? 0 : 2);
       if (!response.ok || !response.body) throw new Error(`Download failed (${response.status}).`);
       const total = Number(response.headers.get('Content-Length')) || 0;
-      if (background) {
+      if (item.background) {
         const { budget } = await storageInfo();
         const used = (await getDownloadedComics()).reduce((sum, row) => sum + (row.fileSize ?? 0), 0);
-        if (total && used + total > budget) { controller.abort(); throw new Error('Preload skipped: cache budget reached.'); }
+        if (item.background && total && used + total > budget) { controller.abort(); throw new Error('Preload skipped: cache budget reached.'); }
       }
       let received = 0, lastUpdate = 0;
       watchdog(60_000);
@@ -124,10 +128,13 @@ async function transfer(comic: ComicSource, controller: AbortController, backgro
       await verifyZip(blob);
       await namedLock(leaseKey(comic.id), () => storageLock(async () => {
         signal.throwIfAborted();
-        if (background) {
+        if (item.background) {
           const { budget } = await storageInfo();
           const used = (await getDownloadedComics()).reduce((sum, row) => sum + (row.fileSize ?? 0), 0);
-          if (used + blob.size > budget) throw new Error('Preload skipped: cache budget reached.');
+          if (item.background && used + blob.size > budget) {
+            controller.abort();
+            throw new Error('Preload skipped: cache budget reached.');
+          }
         }
         await db.transaction('rw', db.downloads, db.comicDownloads, async () => {
           if ((await db.downloads.get(comic.id))?.token !== token) throw new Error('Download cancelled.');
@@ -150,21 +157,23 @@ async function transfer(comic: ComicSource, controller: AbortController, backgro
       throw error;
     } finally { clearTimeout(timer); }
   }, 'exclusive', signal);
-  if (!background) await enforceBudget(comic.id).catch(console.warn);
+  if (!item.background) await enforceBudget(comic.id).catch(console.warn);
 }
 export function downloadComic(comic: ComicSource, signal?: AbortSignal, background = false): Promise<void> {
   cancellationChannel();
   if (signal?.aborted) return Promise.reject(signal.reason);
-  const key = `${comic.id}:${comic.url}`;
+  const key = JSON.stringify([comic.id, comic.url]);
   let entry = active.get(key);
   if (!entry || entry.controller.signal.aborted) {
     const controller = new AbortController();
-    const item: Transfer = { controller, users: 0, promise: Promise.resolve() };
-    item.promise = transfer(comic, controller, background).finally(() => { if (active.get(key) === item) active.delete(key); });
+    const item: Transfer = { id: comic.id, background, controller, users: 0, promise: Promise.resolve() };
+    item.promise = transfer(comic, item).finally(() => { pendingTransfers.delete(item.promise); if (active.get(key) === item) active.delete(key); });
+    pendingTransfers.add(item.promise);
     active.set(key, item);
     entry = item;
   }
   const item = entry;
+  if (!background) item.background = false;
   item.users++;
   return new Promise<void>((resolve, reject) => {
     let finished = false;
@@ -190,22 +199,32 @@ export function preloadComic(comic: ComicSource) {
     preload = downloadComic(comic, undefined, true).catch(() => {}).finally(() => { preload = undefined; preloadId = undefined; });
   }
 }
-export async function withArchive<T>(comic: ComicSource, fn: (blob: Blob) => Promise<T>, signal?: AbortSignal): Promise<T> {
-  if (preloadId && preloadId !== comic.id) abortDownloads(preloadId);
+export async function withArchive<T>(comic: ComicSource, fn: (blob: Blob, record: DownloadRecord) => Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (preloadId && preloadId !== comic.id) {
+    for (const item of active.values()) if (item.id === preloadId && item.background) item.controller.abort();
+  }
   for (let attempt = 0; ; attempt++) {
-    await downloadComic(comic, signal);
+    let refreshError: unknown;
+    try { await downloadComic(comic, signal); }
+    catch (error) {
+      signal?.throwIfAborted();
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      refreshError = error;
+    }
     let storageFailure = false;
     try {
       return await namedLock(leaseKey(comic.id), async () => {
-        let blob: Blob;
+        let blob: Blob, record: DownloadRecord;
         try {
           const row = await db.downloads.get(comic.id);
-          if (!row || (row.url !== comic.url && !isOfflineReading()) || row.status !== 'completed') throw new ArchiveUnavailableError('Archive no longer available.');
+          if (refreshError && (row?.status !== 'completed' || row.url === comic.url)) throw refreshError;
+          if (!row || (!refreshError && row.url !== comic.url && !isOfflineReading()) || row.status !== 'completed') throw new ArchiveUnavailableError('Archive no longer available.');
           blob = await readStored(row);
+          record = row;
         } catch (error) { storageFailure = isUnavailable(error); throw error; }
         // Callback failures (including OOM) are not evidence that stored bytes are bad.
-        const result = await fn(blob);
-        await db.downloads.update(comic.id, { lastAccessedAt: Date.now() });
+        const result = await fn(blob, record);
+        await db.downloads.update(comic.id, { lastAccessedAt: Date.now() }).catch(console.warn);
         return result;
       }, 'shared', signal);
     } catch (error) {
@@ -217,7 +236,7 @@ export async function withArchive<T>(comic: ComicSource, fn: (blob: Blob) => Pro
 }
 
 function abortDownloads(id?: string) {
-  for (const [key, item] of active) if (!id || key.startsWith(`${id}:`)) item.controller.abort();
+  for (const item of active.values()) if (id === undefined || id === item.id) item.controller.abort();
 }
 export async function deleteDownloadedComic(id: string) {
   abortDownloads(id);
@@ -243,33 +262,28 @@ export async function sweepArchives() {
     for (const name of files) if (!name.startsWith('.probe-') && !referenced.has(name)) await removeArchive(name);
   });
 }
-export async function hardReset(reload = true) {
+export async function hardReset(reload = true, onDatabaseReset?: () => void) {
   abortDownloads();
   cancellationChannel()?.postMessage({ type: 'cancel' });
-  await Promise.allSettled([...active.values()].map(item => item.promise));
+  await Promise.allSettled(pendingTransfers);
+  let cleanupError: unknown;
   await storageLock(async () => {
-    db.close();
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const request = indexedDB.deleteDatabase('ComicsDatabase');
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-        request.onblocked = () => reject(new DOMException('Close other comic reader tabs, then reload to complete the reset.', 'InvalidStateError'));
-      });
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'InvalidStateError') void db.open().catch(() => {});
-      else await db.open().catch(() => {});
-      throw error;
-    }
+    // A blocked deleteDatabase request can succeed later, after a failed reset was reported.
+    // Clearing all stores in one transaction commits or rolls back before files are removed.
+    await db.transaction('rw', db.tables, async () => {
+      for (const table of db.tables) await table.clear();
+    });
+    try { onDatabaseReset?.(); } catch (error) { cleanupError = error; }
     // Database reset remains useful even if OPFS is denied or unavailable.
     let root: FileSystemDirectoryHandle | undefined;
     try { root = await navigator.storage?.getDirectory?.(); } catch { /* unavailable backend */ }
     try {
       await root?.removeEntry('archives', { recursive: true });
     } catch (error) {
-      if (!isUnavailable(error)) throw new Error('Database reset succeeded, but archive files could not be removed. Retry the reset.');
-    } finally { await db.open(); }
+      if (!isUnavailable(error)) cleanupError = new Error('Database reset succeeded, but archive files could not be removed. Retry the reset.');
+    }
   });
   await clearUpscaleModels();
+  if (cleanupError) throw cleanupError;
   if (reload) location.reload();
 }

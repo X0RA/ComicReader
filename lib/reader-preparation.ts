@@ -44,7 +44,7 @@ export async function prepareReaderPages({ total, initialPage, currentPage, prep
     // Always yield, even when archive extraction and image decoding are cached.
     await new Promise<void>(resolve => setTimeout(resolve, 16));
     signal.throwIfAborted();
-    const centre = Math.max(1, Math.min(total, currentPage()));
+    const centre = Math.max(1, Math.min(total, currentPage() || 1));
     let next = -1, distance = Infinity;
     for (const number of pending) {
       const candidate = Math.abs(number - centre);

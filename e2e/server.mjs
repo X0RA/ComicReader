@@ -40,5 +40,5 @@ createServer(async (req, res) => {
   else if (req.url === '/large.cbz') { res.setHeader('Content-Length', large.length); res.end(large); }
   else if (req.url === '/stall.cbz') { res.setHeader('Content-Length', comic.length); res.write(comic.subarray(0, 32)); }
   else if (req.url === '/invalid.cbz') res.end('<html>Not a comic</html>');
-  else res.end('<!doctype html><title>Storage tests</title><script src="/bundle.js"></script>');
+  else { res.setHeader('Content-Type', 'text/html'); res.end('<!doctype html><title>Storage tests</title><script src="/bundle.js"></script>'); }
 }).listen(4319, '127.0.0.1');

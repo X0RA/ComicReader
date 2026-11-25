@@ -28,12 +28,35 @@ function imageCrops(image: HTMLImageElement): { crop: CropBounds; tightCrop: Cro
 /** Prepare geometry during the existing decode pass, before pages reach the view.
  * Keep bounds even when cropping is off so toggling it never needs another decode.
  */
-export function prepareReaderPage(url: string, name: string): Promise<ReaderPage> {
+export function prepareReaderPage(url: string, name: string, signal?: AbortSignal, includeCover = false): Promise<ReaderPage & { coverThumbnail?: string }> {
   return new Promise((resolve, reject) => {
+    signal?.throwIfAborted();
     const image = new Image();
-    const release = () => { image.onload = image.onerror = null; image.src = ""; };
+    const release = () => {
+      signal?.removeEventListener("abort", abort);
+      image.onload = image.onerror = null;
+      image.removeAttribute("src");
+    };
+    const abort = () => { release(); reject(signal?.reason); };
+    signal?.addEventListener("abort", abort, { once: true });
     image.onload = () => {
-      const page = { url, name, width: image.naturalWidth, height: image.naturalHeight, ...imageCrops(image) };
+      if (!image.naturalWidth || !image.naturalHeight) { release(); reject(new Error("The page has no image dimensions.")); return; }
+      let coverThumbnail: string | undefined;
+      if (includeCover) {
+        const canvas = document.createElement("canvas");
+        const scale = Math.min(1, 128 / image.naturalWidth, 184 / image.naturalHeight);
+        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+        try {
+          const context = canvas.getContext("2d");
+          if (context) {
+            context.drawImage(image, 0, 0, canvas.width, canvas.height);
+            coverThumbnail = canvas.toDataURL("image/jpeg", .75);
+          }
+        } catch { /* The cover is optional when canvas storage is unavailable. */ }
+        finally { canvas.width = canvas.height = 0; }
+      }
+      const page = { url, name, coverThumbnail, width: image.naturalWidth, height: image.naturalHeight, ...imageCrops(image) };
       release();
       resolve(page);
     };

@@ -50,8 +50,8 @@ export default function Home() {
     }, LOAD_TIMEOUT_MS);
 
     // Load the last folder ID
-    db.getLastFolder().then((id) => {
-      if (id) {
+    const folderReady = db.getLastFolder().then((id) => {
+      if (id && attempt === currentAttempt.current) {
         setLastFolderId(id);
       }
     }).catch((error) => {
@@ -59,7 +59,7 @@ export default function Home() {
     });
 
     // First load from local IndexedDB for faster initial render
-    localCatalog().then((localData) => {
+    Promise.all([localCatalog(), folderReady]).then(([localData]) => {
       if (localData) {
         showData(localData);
       }
@@ -67,8 +67,8 @@ export default function Home() {
       if (isOfflineReading()) { if (!localData) showData([]); return; }
 
       // Then fetch fresh data from remote in the background
-      db.updateFromRemoteDB().then((freshData) => {
-        showData(freshData);
+      db.updateFromRemoteDB().then(() => localCatalog()).then((freshData) => {
+        showData(freshData ?? []);
       }).catch((error) => {
         console.error("Failed to fetch remote data:", error);
         // If we already have local data, we can continue with that

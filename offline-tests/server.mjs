@@ -7,6 +7,11 @@ http.createServer((request, response) => {
     request.socket.destroy();
     return;
   }
+  if (request.headers.cookie?.includes('offline-test-network=stalled') && request.url.startsWith('/read/')) {
+    const timer = setTimeout(() => response.destroy(), 15_000);
+    response.on('close', () => clearTimeout(timer));
+    return;
+  }
   const upstream = http.request({ hostname: '127.0.0.1', port: 4321, path: request.url, method: request.method, headers: request.headers }, result => {
     response.writeHead(result.statusCode, result.headers);
     result.pipe(response);

@@ -14,6 +14,7 @@ test('real fullscreen hides toolbar, reveals on hover/focus and syncs on browser
   await expect(header).toHaveCSS('opacity', '1');
   await page.mouse.move(400, 300);
   await expect(header).toHaveCSS('opacity', '0');
+  await page.getByRole('button', { name: 'Unmount reader' }).focus();
   await page.keyboard.press('Shift+Tab');
   await expect(header).toHaveCSS('opacity', '1');
   // Browser UI / Escape exits produce this same fullscreenchange event.

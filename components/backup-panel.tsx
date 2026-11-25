@@ -7,35 +7,25 @@ const button = "min-h-11 rounded-xl border px-4 text-sm font-medium hover:bg-sec
 const field = "w-full rounded-xl border bg-background p-3 text-sm focus-visible:outline-2 focus-visible:outline-ring";
 async function transfer(body: object) {
   const response = await fetch("/api/transfer", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store", signal: AbortSignal.timeout(15_000) });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "Transfer failed. Try a JSON file or import link.");
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data) throw new Error(data?.error || "Transfer failed. Try a JSON file or import link.");
   return data;
 }
-export default function BackupPanel({ automaticToken }: { automaticToken?: string }) {
+export default function BackupPanel({ linkToken }: { linkToken?: string }) {
   const { setTheme } = useTheme();
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [message, setMessage] = useState("");
   const [link, setLink] = useState(""), [codeInput, setCodeInput] = useState("");
   const [code, setCode] = useState<{ code: string; expiresAt: number }>();
   const [result, setResult] = useState<ImportResult>();
-  const automatic = useRef<{ token: string; promise: Promise<{ backup: ReaderBackup; result: ImportResult }> } | undefined>(undefined);
+  const [importedToken, setImportedToken] = useState<string>();
   const operation = useRef(false);
   const file = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    if (!automaticToken) return;
-    let alive = true;
-    setBusy(true); operation.current = true; setError(""); setMessage("Importing link…");
-    if (automatic.current?.token !== automaticToken) automatic.current = { token: automaticToken, promise: (async () => {
-      const backup = await decodeBackup(automaticToken); return { backup, result: await importBackup(backup) };
-    })() };
-    automatic.current.promise.then(({ backup, result }) => {
-      if (!alive) return;
-      setTheme(backup.settings.theme); setResult(result); setMessage("Import complete.");
-      // Keep the imported data out of subsequent history entries and copied addresses.
-      history.replaceState(history.state, "", "/import");
-    }).catch(error => { if (alive) { setError(String(error instanceof Error ? error.message : error)); setMessage(""); } })
-      .finally(() => { if (alive) { setBusy(false); operation.current = false; } });
-    return () => { alive = false; };
-  }, [automaticToken, setTheme]);
+    if (linkToken && location.pathname.startsWith("/import/")) {
+      history.replaceState(history.state, "", `/import#${encodeURIComponent(linkToken)}`);
+      if (document.documentElement.dataset.offlineApp) window.dispatchEvent(new Event("offline-navigation"));
+    }
+  }, [linkToken]);
   const snapshot = () => exportBackup(Math.min(innerWidth, innerHeight) < 640);
   async function run(action: () => Promise<void>) {
     if (operation.current) return;
@@ -53,6 +43,11 @@ export default function BackupPanel({ automaticToken }: { automaticToken?: strin
   return <div className="space-y-6">
     <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">Move your reader settings, theme, bookmarks, reading progress, and last-opened comic/folder between browsers. Comic files and cached upscaling models are excluded.</p>
     <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">Imports add missing bookmarks and keep existing notes on duplicate pages. Progress keeps the furthest page and completed status. Imported settings replace this browser’s settings.</p>
+    {linkToken && importedToken !== linkToken && <button type="button" className={button} disabled={busy} onClick={() => run(async () => {
+      await apply(await decodeBackup(linkToken));
+      setImportedToken(linkToken);
+      history.replaceState(history.state, "", "/import");
+    })}>Import this backup</button>}
     {(message || error || result) && <div className="space-y-2 rounded-xl border bg-card p-4 text-sm">
       {error && <p role="alert" className="text-destructive">{error}</p>}{message && <p role="status">{message}</p>}
       {result && <><p>{result.bookmarksAdded} bookmarks added · {result.bookmarksKept} existing bookmarks kept · {result.progressUpdated} reading records updated.</p><Link href="/" className="inline-flex min-h-11 items-center text-primary hover:underline">Return to library</Link></>}
@@ -73,7 +68,7 @@ export default function BackupPanel({ automaticToken }: { automaticToken?: strin
       }} /></div>
     </section>
     <section aria-labelledby="backup-link-title" className="space-y-3 rounded-2xl border bg-card p-5">
-      <h2 id="backup-link-title" className="font-semibold">Import link</h2><p className="text-sm text-muted-foreground">Open the link on another device to import automatically. The link contains your settings, bookmarks and progress; anyone with it can read them. Large backups should use a JSON file.</p>
+      <h2 id="backup-link-title" className="font-semibold">Import link</h2><p className="text-sm text-muted-foreground">Open the link on another device and confirm the import. The link contains your settings, bookmarks and progress; anyone with it can read them. Large backups should use a JSON file.</p>
       <button type="button" className={button} disabled={busy} onClick={() => run(async () => { const url = await backupLink(await snapshot(), location.origin); setLink(url); await copy(url); })}>Create import link</button>
       {link && <div className="space-y-2"><label className="block text-sm">Import link<textarea readOnly value={link} rows={3} className={`${field} mt-2 break-all font-mono text-xs`} onFocus={event => event.target.select()} /></label><button type="button" className={button} disabled={busy} onClick={() => copy(link)}>Copy link</button></div>}
     </section>

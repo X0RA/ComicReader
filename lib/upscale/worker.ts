@@ -12,27 +12,34 @@ let model: UpscaleModel | undefined;
 let busy = false;
 
 scope.onmessage = async ({ data }: MessageEvent<{ type: "init"; model: UpscaleModel; weights: ArrayBuffer } | { type: "render"; url: string }>) => {
-  if (busy) return;
+  if (busy) { scope.postMessage({ type: "error", message: "The GPU worker is busy." }); return; }
   busy = true;
+  let bitmap: ImageBitmap | undefined, source: OffscreenCanvas | undefined, output: OffscreenCanvas | undefined;
   try {
     if (data.type === "init") {
       const adapter = await navigator.gpu?.requestAdapter({ powerPreference: "high-performance" });
-      if (!adapter || adapter.info.isFallbackAdapter) throw new Error("GPU upscaling is unavailable in this browser. Enable hardware acceleration or use a browser with WebGPU support.");
+      if (!adapter || adapter.info?.isFallbackAdapter || (adapter as { isFallbackAdapter?: boolean }).isFallbackAdapter) throw new Error("GPU upscaling is unavailable in this browser. Enable hardware acceleration or use a browser with WebGPU support.");
       model = data.model;
       session = await ort.InferenceSession.create(data.weights, { executionProviders: ["webgpu"], graphOptimizationLevel: "all", enableMemPattern: false });
       scope.postMessage({ type: "ready" });
     } else {
       if (!session || !model) throw new Error("The upscaler is not ready.");
       const started = performance.now();
-      const bitmap = await createImageBitmap(await (await fetch(data.url)).blob());
+      const response = await fetch(data.url);
+      if (!response.ok) throw new Error("The page image is unavailable.");
+      bitmap = await createImageBitmap(await response.blob());
       const { width, height } = bitmap, scale = model.scale;
       // Limit CPU output allocations as well as GPU tiles; originals remain readable.
-      if (width * height * scale * scale > 64_000_000) { bitmap.close(); throw new Error("This page is too large for GPU upscaling at the selected scale. Try a 2× model."); }
-      const source = new OffscreenCanvas(width, height), context = source.getContext("2d")!;
-      context.drawImage(bitmap, 0, 0); bitmap.close();
+      if (Math.max(width, height) * scale > 16384 || width * height * scale * scale > 64_000_000) { throw new Error("This page is too large for GPU upscaling at the selected scale. Try a 2× model."); }
+      source = new OffscreenCanvas(width, height);
+      const context = source.getContext("2d");
+      if (!context) throw new Error("Cannot allocate a canvas for this page.");
+      context.drawImage(bitmap, 0, 0); bitmap.close(); bitmap = undefined;
       const pixels = context.getImageData(0, 0, width, height).data;
       source.width = source.height = 1;
-      const output = new OffscreenCanvas(width * scale, height * scale), target = output.getContext("2d")!;
+      output = new OffscreenCanvas(width * scale, height * scale);
+      const target = output.getContext("2d");
+      if (!target) throw new Error("Cannot allocate a canvas for the enhanced page.");
       const tiles = upscaleTiles(width, height, 256, 16, model.multiple);
       for (let index = 0; index < tiles.length; index++) {
         const tile = tiles[index], area = tile.inputWidth * tile.inputHeight;
@@ -61,10 +68,14 @@ scope.onmessage = async ({ data }: MessageEvent<{ type: "init"; model: UpscaleMo
         scope.postMessage({ type: "progress", progress: (index + 1) / tiles.length });
       }
       const blob = await output.convertToBlob({ type: "image/png" });
-      output.width = output.height = 1;
       scope.postMessage({ type: "result", blob, width: width * scale, height: height * scale, duration: performance.now() - started });
     }
   } catch (error) {
     scope.postMessage({ type: "error", message: error instanceof Error ? error.message : String(error) });
-  } finally { busy = false; }
+  } finally {
+    bitmap?.close();
+    if (source) source.width = source.height = 1;
+    if (output) output.width = output.height = 1;
+    busy = false;
+  }
 };

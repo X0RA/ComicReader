@@ -13,8 +13,8 @@ export function supportsOPFS() {
       try {
         const handle = await dir.getFileHandle(name, { create: true });
         const writer = await handle.createWritable();
-        await writer.write('ok');
-        await writer.close();
+        try { await writer.write('ok'); await writer.close(); }
+        catch (error) { await writer.abort().catch(() => {}); throw error; }
         return await (await handle.getFile()).text() === 'ok';
       } finally { await dir.removeEntry(name).catch(() => {}); }
     } catch { return false; }
@@ -39,15 +39,42 @@ export function uniqueId() {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
 }
-const queues = new Map<string, Promise<unknown>>();
-export function namedLock<T>(name: string, fn: () => Promise<T>, mode: 'shared' | 'exclusive' = 'exclusive', signal?: AbortSignal): Promise<T> {
+interface Waiter { mode: LockMode; start: () => void }
+interface LocalLock { readers: number; writing: boolean; queue: Waiter[] }
+const queues = new Map<string, LocalLock>();
+function drain(name: string, lock: LocalLock) {
+  while (!lock.writing && lock.queue.length) {
+    const next = lock.queue[0];
+    if (lock.readers && next.mode === 'exclusive') return;
+    lock.queue.shift();
+    if (next.mode === 'exclusive') lock.writing = true; else lock.readers++;
+    next.start();
+  }
+  if (!lock.writing && !lock.readers && !lock.queue.length) queues.delete(name);
+}
+export async function namedLock<T>(name: string, fn: () => Promise<T>, mode: LockMode = 'exclusive', signal?: AbortSignal): Promise<T> {
   if (navigator.locks) return navigator.locks.request(name, { mode, signal }, fn);
-  const run = async () => { signal?.throwIfAborted(); return fn(); };
-  const result = (queues.get(name) ?? Promise.resolve()).then(run, run);
-  const tail = result.catch(() => {});
-  queues.set(name, tail);
-  void tail.finally(() => { if (queues.get(name) === tail) queues.delete(name); });
-  return result;
+  signal?.throwIfAborted();
+  const lock = queues.get(name) ?? { readers: 0, writing: false, queue: [] };
+  queues.set(name, lock);
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => {
+      lock.queue.splice(lock.queue.indexOf(waiter), 1);
+      drain(name, lock);
+      reject(signal?.reason);
+    };
+    const waiter: Waiter = { mode, start: async () => {
+      signal?.removeEventListener('abort', abort);
+      try { resolve(await fn()); } catch (error) { reject(error); }
+      finally {
+        if (mode === 'exclusive') lock.writing = false; else lock.readers--;
+        drain(name, lock);
+      }
+    } };
+    signal?.addEventListener('abort', abort, { once: true });
+    lock.queue.push(waiter);
+    drain(name, lock);
+  });
 }
 export async function tryLock<T>(name: string, fn: () => Promise<T>): Promise<T | undefined> {
   if (navigator.locks) return navigator.locks.request(name, { ifAvailable: true }, lock => lock ? fn() : undefined);
@@ -59,9 +86,17 @@ export const leaseKey = (id: string) => `comic-reader:${id}`;
 export const storageLock = <T>(fn: () => Promise<T>) => namedLock('comic-storage-v3', fn);
 export async function verifyZip(blob: Blob) {
   const tail = new Uint8Array(await blob.slice(-1024 * 1024).arrayBuffer());
+  const view = new DataView(tail.buffer);
   for (let i = tail.length - 22; i >= 0; i--) {
     if (tail[i] === 0x50 && tail[i + 1] === 0x4b && tail[i + 2] === 5 && tail[i + 3] === 6 &&
-        i + 22 + tail[i + 20] + (tail[i + 21] << 8) <= tail.length) return;
+        i + 22 + view.getUint16(i + 20, true) === tail.length) {
+      const offset = view.getUint32(i + 16, true), size = view.getUint32(i + 12, true);
+      const count = view.getUint16(i + 10, true);
+      if (count && size >= 46 * count && offset + size === blob.size - tail.length + i) {
+        const signature = new DataView(await blob.slice(offset, offset + 4).arrayBuffer());
+        if (signature.getUint32(0, true) === 0x02014b50) return;
+      }
+    }
   }
   const { default: JSZip } = await import('jszip');
   await JSZip.loadAsync(blob); // Compatibility path for unusual but valid ZIP layouts.

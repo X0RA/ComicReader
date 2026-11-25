@@ -50,11 +50,11 @@ export function useComic(id: string, retry: number, requestedPage?: number) {
         update({ phase: "Downloading for offline reading…" });
         tracker = setInterval(() => {
           void getComicDownloadStatus(id).then(status => {
-            if (status?.status === "in_progress") update({ progress: status.progress });
+            if (tracker && status?.status === "in_progress") update({ progress: status.progress });
           }).catch(() => {});
         }, 350);
-        await withArchive({ id, url: chapter.comic.link, name: chapter.comic.name }, async blob => {
-          clearInterval(tracker);
+        await withArchive({ id, url: chapter.comic.link, name: chapter.comic.name }, async (blob, record) => {
+          clearInterval(tracker); tracker = undefined;
           if (cancelled) return;
           update({ phase: "Preparing nearby pages…", progress: 0 });
           const zip = await JSZip.loadAsync(blob);
@@ -81,8 +81,11 @@ export function useComic(id: string, retry: number, requestedPage?: number) {
                 if (cancelled) return;
                 url = URL.createObjectURL(content);
                 urls.add(url);
-                const page = await prepareReaderPage(url, names[index]);
+                const page = await prepareReaderPage(url, names[index], controller.signal, number === 1 && !record.coverThumbnail);
                 if (cancelled) return;
+                if (page.coverThumbnail) {
+                  await db.downloads.update(id, { coverThumbnail: page.coverThumbnail }).catch(console.warn);
+                }
                 pages[index] = page;
                 readable++;
               } catch {
@@ -121,7 +124,7 @@ export function useComic(id: string, retry: number, requestedPage?: number) {
         // Same real remote/cache path as an explicit open. A failed preload is nonfatal.
         if (chapter.next) preloadComic({ id: chapter.next.id, url: chapter.next.link, name: chapter.next.name });
       } catch (error) {
-        update({ loading: false, preparing: false, error: error instanceof Error ? error.message : "Unable to open this comic." });
+        update({ loading: false, preparing: false, error: error instanceof Error && error.message ? error.message : "Unable to open this comic." });
       } finally { clearInterval(tracker); }
     }
     void load();

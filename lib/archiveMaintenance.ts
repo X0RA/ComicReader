@@ -68,7 +68,7 @@ async function run() {
         let blob: Blob;
         try { blob = await readStored(row); } catch { return; }
         const info = await storageInfo();
-        if (info.quota && info.quota - (info.usage ?? 0) < blob.size + 64 * 1024 ** 2) return;
+        if (info.quota !== undefined && info.quota - (info.usage ?? 0) < blob.size + 64 * 1024 ** 2) return;
         const name = `${uniqueId()}.cbz`;
         await storageLock(() => db.downloads.update(row.id, { pendingFile: name }));
         let published = false;
@@ -85,8 +85,8 @@ async function run() {
             if ((await db.downloads.get(row.id))?.pendingFile !== name) throw new Error('Migration cancelled');
             await db.downloads.update(row.id, { backend: 'opfs', archiveFile: name, pendingFile: undefined });
             await db.comicDownloads.delete(row.id);
-            published = true;
           })));
+          published = true;
         } catch (error) {
           if (!published) await removeArchive(name).catch(() => {});
           console.warn('Archive migration deferred; original retained.', error);

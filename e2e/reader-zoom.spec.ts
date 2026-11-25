@@ -25,7 +25,7 @@ test('desktop wheel zoom anchors the cursor, supports panning, and resets on pag
   const image = page.getByRole('img', { name: 'Page 1', exact: true });
   const before = (await image.boundingBox())!;
   const x = before.x + before.width * .3, y = before.y + before.height * .2;
-  await page.mouse.move(x, y); await page.mouse.wheel(0, -120);
+  await page.mouse.move(x, y); await page.keyboard.down("Alt"); await page.mouse.wheel(0, -120); await page.keyboard.up("Alt");
   await expect.poll(async () => (await image.boundingBox())!.width).toBeGreaterThan(before.width);
   const after = (await image.boundingBox())!;
   expect(Math.abs(after.x + after.width * .3 - x)).toBeLessThan(1);
@@ -43,7 +43,7 @@ test('zooming out remains anchored even when the page fits the viewport', async 
   const image = page.getByRole('img', { name: 'Page 1', exact: true });
   const before = (await image.boundingBox())!;
   const x = before.x + before.width * .7, y = before.y + before.height * .2;
-  await page.mouse.move(x, y); await page.mouse.wheel(0, 120);
+  await page.mouse.move(x, y); await page.keyboard.down("Alt"); await page.mouse.wheel(0, 120); await page.keyboard.up("Alt");
   await expect.poll(async () => (await image.boundingBox())!.width).toBeLessThan(before.width);
   const after = (await image.boundingBox())!;
   expect(Math.abs(after.x + after.width * .7 - x)).toBeLessThan(1);
@@ -57,7 +57,7 @@ test('phone wheel behavior and modal dialogs do not trigger reader zoom', async 
     await page.evaluate(interaction => window.readerTest.render((window as any).zoomPages, [1], false, 'single', {}, interaction), interaction);
     const image = page.getByRole('img', { name: 'Page 1', exact: true });
     const before = (await image.boundingBox())!;
-    await page.mouse.move(before.x + before.width / 2, before.y + 100); await page.mouse.wheel(0, -100);
+    await page.mouse.move(before.x + before.width / 2, before.y + 100); await page.keyboard.down("Alt"); await page.mouse.wheel(0, -100); await page.keyboard.up("Alt");
     await page.waitForTimeout(100);
     expect((await image.boundingBox())!.width).toBeCloseTo(before.width, 1);
     await expect(page.getByRole('button', { name: /Reset zoom/ })).toHaveCount(0);

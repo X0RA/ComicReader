@@ -7,11 +7,12 @@ export default function UpscaleControls({ upscaling: u }: { upscaling: Upscaling
   const root = useRef<HTMLDivElement>(null);
   const { state: s, model } = u;
   useEffect(() => {
+    if (!model) { setOpen(false); return; }
     if (!open) return;
     const outside = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false); };
     document.addEventListener("pointerdown", outside);
     return () => document.removeEventListener("pointerdown", outside);
-  }, [open]);
+  }, [open, model]);
   if (!model) return null;
   const idle = s.status === "idle" || s.status === "error";
   const label = s.status === "loading" ? `Model ${Math.round(s.download * 100)}%` : s.status === "running" ? `Rendering ${s.active.length} ${s.active.length === 1 ? "page" : "pages"}` : s.status === "paused" ? "Render paused" : s.status === "waiting" ? s.memoryLimit ? "Render memory limit" : "Render buffer ready" : s.status === "complete" ? "Render complete" : "Render from here";

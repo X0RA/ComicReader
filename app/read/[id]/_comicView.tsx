@@ -68,7 +68,7 @@ const ComicView = forwardRef<ComicViewHandle, Props>(function ComicView({ pages,
     observer.observe(root);
     return () => observer.disconnect();
   }, []);
-  const pointerStart = useRef<{ x: number; y: number; time: number; scroll: number; left: number } | null>(null);
+  const pointerStart = useRef<{ id: number; x: number; y: number; time: number; scroll: number; left: number } | null>(null);
   const lastScroll = useRef(0);
   const scrollAnchor = useRef({ page: currentPage, offset: 0 });
   const currentRef = useRef(currentPage);
@@ -92,6 +92,7 @@ const ComicView = forwardRef<ComicViewHandle, Props>(function ComicView({ pages,
     if (paged) { root.scrollTo({ top: 0, left: 0 }); lastScroll.current = 0; return; }
     const target = pageRefs.current.get(page);
     if (target) {
+      root.scrollLeft = 0;
       root.scrollTop = bottom ? root.scrollHeight : target.offsetTop - 16;
       lastScroll.current = root.scrollTop;
       scrollAnchor.current = { page, offset: root.scrollTop - target.offsetTop };
@@ -103,10 +104,10 @@ const ComicView = forwardRef<ComicViewHandle, Props>(function ComicView({ pages,
     atEnd: () => { const root = scrollRef.current; return !!root && root.scrollTop + root.clientHeight >= root.scrollHeight - 3; },
   }), [jump]);
 
-  useLayoutEffect(() => { jump(currentRef.current); }, [jump, stageWidth, height, settings.maxWidth, settings.fit, settings.zoom, settings.noUpscale, settings.gap, settings.crop, settings.cropTightness, settings.cropExtraHorizontal, settings.cropExtraVertical]);
+  useLayoutEffect(() => { jump(currentRef.current); }, [jump, stageWidth, paged ? height : 0, settings.maxWidth, settings.fit, settings.zoom, settings.noUpscale, settings.gap, settings.crop, settings.cropTightness, settings.cropExtraHorizontal, settings.cropExtraVertical]);
   const spreadKey = visiblePages.join("-");
   useLayoutEffect(() => { if (paged) jump(currentRef.current); }, [paged, spreadKey, jump]);
-  useLayoutEffect(() => { if (cameraRef.current.active) resetZoom(); }, [paged, paged ? spreadKey : "webtoon", phone, stageWidth, height, settings.fit, settings.zoom, settings.noUpscale, settings.crop, settings.cropTightness, settings.cropExtraHorizontal, settings.cropExtraVertical, resetZoom]);
+  useLayoutEffect(() => { if (cameraRef.current.active) resetZoom(); }, [paged, paged ? spreadKey : "webtoon", phone, stageWidth, paged ? height : 0, settings.maxWidth, settings.gap, settings.fit, settings.zoom, settings.noUpscale, settings.crop, settings.cropTightness, settings.cropExtraHorizontal, settings.cropExtraVertical, resetZoom]);
   useLayoutEffect(() => {
     if (resetPosition.current) {
       resetPosition.current = false;
@@ -161,7 +162,7 @@ const ComicView = forwardRef<ComicViewHandle, Props>(function ComicView({ pages,
         const target = pageRefs.current.get(page);
         if (target) scrollAnchor.current = { page, offset: root.scrollTop - target.offsetTop };
         callbacks.current.onPage(page);
-        if (delta > 3 && root.scrollTop + root.clientHeight >= root.scrollHeight - 2 && !callbacks.current.panelOpen) callbacks.current.onEnd();
+        if (!cameraRef.current.active && delta > 3 && root.scrollTop + root.clientHeight >= root.scrollHeight - 2 && !callbacks.current.panelOpen) callbacks.current.onEnd();
       });
     };
     root.addEventListener("scroll", scroll, { passive: true });
@@ -174,10 +175,11 @@ const ComicView = forwardRef<ComicViewHandle, Props>(function ComicView({ pages,
     let lastTurn = 0, accumulated = 0;
     const wheel = (event: WheelEvent) => {
       if (callbacks.current.panelOpen || event.ctrlKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
-      if (!phone) {
+      if (!phone && event.altKey) {
         if (!event.deltaY) return;
         const element = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-reader-page]") : null;
-        const number = element ? Number(element.dataset.readerPage) : currentRef.current;
+        if (!element) return;
+        const number = Number(element.dataset.readerPage);
         const target = pageRefs.current.get(number);
         if (!target || target.querySelector('[aria-busy="true"]')) return;
         event.preventDefault();
@@ -198,7 +200,7 @@ const ComicView = forwardRef<ComicViewHandle, Props>(function ComicView({ pages,
         callbacks.current.onTurn(accumulated > 0 ? 1 : -1);
         accumulated = 0;
         lastTurn = performance.now();
-      } else if (!paged && event.deltaY > 0 && root.scrollTop + root.clientHeight >= root.scrollHeight - 2) {
+      } else if (!cameraRef.current.active && !paged && event.deltaY > 0 && root.scrollTop + root.clientHeight >= root.scrollHeight - 2) {
         callbacks.current.onEnd();
       }
     };
@@ -225,18 +227,20 @@ const ComicView = forwardRef<ComicViewHandle, Props>(function ComicView({ pages,
   }, [autoRunning, paged, panelOpen, settings.autoScroll, zoomed]);
 
   const pointerDown = (event: PointerEvent) => {
-    if (!event.isPrimary || event.button !== 0) return;
-    pointerStart.current = { x: event.clientX, y: event.clientY, time: performance.now(), scroll: scrollRef.current?.scrollTop ?? 0, left: scrollRef.current?.scrollLeft ?? 0 };
+    if (!event.isPrimary) { if (event.pointerType === "touch") pointerStart.current = null; return; }
+    if (event.button !== 0) return;
+    pointerStart.current = { id: event.pointerId, x: event.clientX, y: event.clientY, time: performance.now(), scroll: scrollRef.current?.scrollTop ?? 0, left: scrollRef.current?.scrollLeft ?? 0 };
     if (zoomed) event.currentTarget.setPointerCapture(event.pointerId);
   };
   const pointerMove = (event: PointerEvent) => {
     const start = pointerStart.current, root = scrollRef.current;
-    if (!zoomed || !start || !root || !event.buttons) return;
+    if (!zoomed || start?.id !== event.pointerId || !start || !root || !(event.buttons & 1)) return;
     root.scrollLeft = start.left + start.x - event.clientX;
     root.scrollTop = start.scroll + start.y - event.clientY;
   };
   const pointerUp = (event: PointerEvent) => {
     const start = pointerStart.current;
+    if (start?.id !== event.pointerId || event.button !== 0) return;
     pointerStart.current = null;
     if (!start || Math.abs(start.x - event.clientX) + Math.abs(start.y - event.clientY) > 12 || Math.abs(start.scroll - (scrollRef.current?.scrollTop ?? 0)) > 12 || performance.now() - start.time > 650 || window.getSelection()?.toString()) return;
     const rect = scrollRef.current!.getBoundingClientRect();
@@ -249,8 +253,8 @@ const ComicView = forwardRef<ComicViewHandle, Props>(function ComicView({ pages,
   };
   const ratios = visiblePages.reduce((sum, number) => sum + pageRatio(pages[number - 1]), 0);
   const spreadPending = paged && visiblePages.some(number => pages[number - 1].status === "pending");
-  return <><div ref={scrollRef} role="region" aria-label="Comic pages" tabIndex={0} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={() => { pointerStart.current = null; }} className={`${styles.viewport} absolute inset-0 overflow-auto overscroll-contain focus-visible:outline-2 focus-visible:outline-ring`} style={{ overflowAnchor: "none", cursor: zoomed ? "grab" : undefined, backgroundColor: { black: "#09090a", grey: "#3a3a3f", white: "#f4f3ef" }[settings.background] }}>
-    <div key={paged ? spreadKey : "webtoon"} className={`${paged ? `flex w-max min-w-full items-start justify-center px-0 py-4 ${styles.page} ${styles[settings.transition] ?? ""}` : "relative flex w-max min-w-full flex-col items-center"}`} style={{ paddingLeft: zoomed ? stageWidth : paged && !phone ? 72 : 0, paddingRight: zoomed ? stageWidth : paged && !phone ? 72 : 0, paddingTop: zoomed ? height : undefined, paddingBottom: zoomed ? height : undefined, gap: paged ? settings.spineGap : settings.gap ? 12 : 0, "--reader-slide": `${turnDirection * (settings.direction === "rtl" ? -1 : 1) * 24}px` } as CSSProperties}>
+  return <><div ref={scrollRef} role="region" aria-label="Comic pages" tabIndex={0} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={event => { if (pointerStart.current?.id === event.pointerId) pointerStart.current = null; }} className={`${styles.viewport} absolute inset-0 overflow-auto overscroll-contain focus-visible:outline-2 focus-visible:outline-ring`} style={{ overflowAnchor: "none", cursor: zoomed ? "grab" : undefined, backgroundColor: { black: "#09090a", grey: "#3a3a3f", white: "#f4f3ef" }[settings.background] }}>
+    <div key={paged ? spreadKey : "webtoon"} className={`${paged ? `flex w-max min-w-full items-start justify-center px-0 py-4 ${styles.page} ${styles[settings.transition] ?? ""}` : "relative flex w-max min-w-full flex-col items-center"}`} style={{ paddingLeft: zoomed ? stageWidth : paged && !phone ? 72 : 0, paddingRight: zoomed ? stageWidth : paged && !phone ? 72 : 0, paddingTop: zoomed && paged ? height : undefined, paddingBottom: zoomed && paged ? height : undefined, gap: paged ? settings.spineGap : settings.gap ? 12 : 0, "--reader-slide": `${turnDirection * (settings.direction === "rtl" ? -1 : 1) * 24}px` } as CSSProperties}>
       {indices.map(number => {
         const page = pages[number - 1];
         const pageWidth = paged ? (availableWidth - settings.spineGap * (visiblePages.length - 1)) * pageRatio(page) / ratios : Math.min(stageWidth, settings.maxWidth);

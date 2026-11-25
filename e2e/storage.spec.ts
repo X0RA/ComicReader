@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './storage-context';
 // The harness bundles the real storage modules; it is never part of the app.
 declare global { interface Window { storageTest: any } }
 test.beforeEach(async ({ page }) => { await page.goto('/'); await page.waitForFunction(() => !!window.storageTest); });
@@ -184,18 +184,18 @@ test('hard reset still clears IndexedDB when OPFS is inaccessible', async ({ pag
   expect(result).toEqual({ rows: 0, progress: 0, open: true });
 });
 
-test('failed database reset preserves archives and reopens Dexie', async ({ page }) => {
+test('failed database reset preserves archives and keeps Dexie open', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const s = window.storageTest;
     await s.downloadComic({ id: 'one', url: '/comic.cbz' });
-    const original = indexedDB.deleteDatabase.bind(indexedDB);
-    Object.defineProperty(indexedDB, 'deleteDatabase', { configurable: true, value: () => {
-      const request: any = { error: new Error('reset denied') };
-      setTimeout(() => request.onerror(), 0); return request;
-    } });
+    const original = IDBObjectStore.prototype.clear;
+    IDBObjectStore.prototype.clear = function() {
+      if (this.name === 'downloads') throw new DOMException('Reset denied', 'UnknownError');
+      return original.call(this);
+    };
     let rejected = false;
     try { await s.hardReset(false); } catch { rejected = true; }
-    Object.defineProperty(indexedDB, 'deleteDatabase', { value: original });
+    IDBObjectStore.prototype.clear = original;
     return { rejected, open: s.db.isOpen(), size: (await s.readStored(await s.db.downloads.get('one'))).size };
   });
   expect(result.rejected).toBe(true); expect(result.open).toBe(true); expect(result.size).toBeGreaterThan(0);
@@ -351,4 +351,22 @@ test('migration leaves the original readable while its copy is in progress', asy
   ]));
   expect(typeof result).toBe('number');
   await page.evaluate(() => (window as any).resumeMigration()); await migration;
+});
+
+test('a foreground reader promotes a preload that exceeds the cache budget', async ({ page }) => {
+  expect(await page.evaluate(async () => {
+    const s = window.storageTest, comic = { id: 'next', url: '/comic.cbz' };
+    Object.defineProperty(navigator.storage, 'estimate', { value: async () => ({ quota: 0 }) });
+    s.preloadComic(comic);
+    return s.withArchive(comic, async (blob: Blob) => blob.size);
+  })).toBeGreaterThan(0);
+});
+
+test('an unavailable replacement URL preserves the readable download', async ({ page }) => {
+  expect(await page.evaluate(async () => {
+    const s = window.storageTest;
+    await s.downloadComic({ id: 'existing', url: '/comic.cbz' });
+    const size = await s.withArchive({ id: 'existing', url: '/invalid.cbz' }, async (blob: Blob) => blob.size);
+    return { size, saved: (await s.db.downloads.get('existing')).url };
+  })).toEqual({ size: expect.any(Number), saved: '/comic.cbz' });
 });

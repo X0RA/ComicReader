@@ -20,7 +20,11 @@ export default function ComicOverlay({ visible, page, lastVisiblePage, total, pa
     <div className="flex flex-col sm:flex-row sm:items-center sm:gap-1">
       <div className="hidden sm:contents">{button("Previous chapter", ChevronsLeft, () => chapter(-1), !previousChapter)}{paged && button("Previous page", prev, () => turn(-1), !canPrevious)}</div>
       <label className="flex min-h-11 min-w-0 flex-1 items-center gap-4 px-3"><span className="sr-only">Page</span>
-        <input type="range" min={1} max={Math.max(1, total)} value={page} aria-valuetext={`${range} of ${total}`} onChange={event => jump(Number(event.target.value))} className="h-11 min-w-0 flex-1 cursor-pointer accent-primary" />
+        <input type="range" min={1} max={Math.max(1, total)} value={page} aria-valuetext={`${range} of ${total}`} onKeyDown={event => {
+          if (lastVisiblePage > page && ["ArrowRight", "ArrowUp"].includes(event.key)) {
+            event.preventDefault(); jump(Math.min(total, lastVisiblePage + 1));
+          }
+        }} onChange={event => jump(Number(event.target.value))} className="h-11 min-w-0 flex-1 cursor-pointer accent-primary" />
         <span className="whitespace-nowrap font-mono text-xs">{range}<span className="text-muted-foreground"> / {total}</span></span>
       </label>
       <div className="hidden sm:contents">{paged && button("Next page", next, () => turn(1), !canNext)}{button("Next chapter", ChevronsRight, () => chapter(1), !nextChapter)}

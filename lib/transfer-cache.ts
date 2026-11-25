@@ -20,11 +20,10 @@ export class TransferCache {
   }
   rateLimit(address: string) {
     this.sweep();
-    // Store a short-lived digest, not the caller's address.
-    const key = createHash("sha256").update(address).digest("hex");
+    // Fixed hash buckets bound memory without refusing all new callers at capacity.
+    const key = createHash("sha256").update(address).digest("hex").slice(0, 3);
     const existing = this.attempts.get(key);
     if (existing && existing.count >= 30) throw new TransferError("Too many transfer requests. Wait a minute and try again.", 429);
-    if (!existing && this.attempts.size >= 4096) throw new TransferError("Transfer service is busy. Try a file or link instead.", 503);
     this.attempts.set(key, { count: (existing?.count ?? 0) + 1, resetAt: existing?.resetAt ?? this.now() + 60_000 });
   }
   create(payload: unknown) {

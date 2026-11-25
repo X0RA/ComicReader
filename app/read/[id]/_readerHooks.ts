@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { defaultReaderSettings, parseReaderSettings, READER_SETTINGS_KEY, type ReaderSettings } from "@/lib/reader-settings";
 
 export function useReaderSettings() {
-  const [settings, setSettings] = useState<ReaderSettings>(defaultReaderSettings(false));
+  const [settings, publishSettings] = useState<ReaderSettings>(defaultReaderSettings(false));
+  const current = useRef(settings);
+  const setSettings = useCallback((value: ReaderSettings) => { current.current = value; publishSettings(value); }, []);
   const [ready, setReady] = useState(false);
   const [viewport, setViewport] = useState({ width: 1280, height: 900, phone: false });
   const [storageError, setStorageError] = useState(false);
@@ -24,14 +26,12 @@ export function useReaderSettings() {
     return () => { window.removeEventListener("resize", measure); window.removeEventListener("storage", sync); };
   }, []);
   const change = useCallback((patch: Partial<ReaderSettings>) => {
-    setSettings(previous => {
-      const next = { ...previous, ...patch };
-      if (next.layout === "webtoon" && next.fit === "height") next.fit = "width";
-      try { localStorage.setItem(READER_SETTINGS_KEY, JSON.stringify(next)); setStorageError(false); }
-      catch { setStorageError(true); }
-      return next;
-    });
-  }, []);
+    const next = { ...current.current, ...patch };
+    if (next.layout === "webtoon" && next.fit === "height") next.fit = "width";
+    try { localStorage.setItem(READER_SETTINGS_KEY, JSON.stringify(next)); setStorageError(false); }
+    catch { setStorageError(true); }
+    setSettings(next);
+  }, [setSettings]);
   const reset = useCallback(() => change(defaultReaderSettings(viewport.phone)), [change, viewport.phone]);
   return { settings, change, reset, ready, viewport, storageError };
 }
